@@ -104,7 +104,7 @@ async def download_data(request: DownloadRequest):
             return create_json_response(data)
         elif format_type == "csv":
             return create_csv_response(data)
-        elif format_type == "excel":
+        elif format_type == "xlsx":
             return create_excel_response(data)
         elif format_type == "pdf":
             return create_pdf_response(data)
@@ -185,9 +185,9 @@ def create_excel_response(data):
                     "Name": resume.get("personal_info", {}).get("name", ""),
                     "Email": resume.get("personal_info", {}).get("email", ""),
                     "Phone": resume.get("personal_info", {}).get("phone", ""),
-                    "Skills Count": len(resume.get("skills", [])),
-                    "Experience Count": len(resume.get("experience", [])),
-                    "Education Count": len(resume.get("education", []))
+                    "Skills": resume.get("skills", []),
+                    "Experience": resume.get("experience", []),
+                    "Education": resume.get("education", [])
                 }
                 summary_data.append(summary_row)
         

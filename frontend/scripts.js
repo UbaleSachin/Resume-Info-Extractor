@@ -197,7 +197,7 @@ class ResumeExtractor {
             return;
         }
 
-        const format = document.getElementById('downloadFormat').value;
+        const format = 'xlsx';
         
         try {
             const response = await fetch('http://localhost:8000/download-data', {
