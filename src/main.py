@@ -9,7 +9,9 @@ import pandas as pd
 from io import BytesIO, StringIO
 import tempfile
 import os
+
 from src.llm.resume_extractor import ResumeExtractor
+from src.llm.candidate_fit import CandidateFitEvaluator
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
@@ -31,6 +33,13 @@ resume_extractor = ResumeExtractor()
 class DownloadRequest(BaseModel):
     data: Dict[str, Any]
     format: str
+
+class JobDescriptionRequest(BaseModel):
+    job_description: str
+
+class CandidateFitRequest(BaseModel):
+    resume_data: Dict[str, Any]
+    job_description_data: str  # This should be string, not Dict
 
 @app.get("/")
 async def root():
@@ -91,6 +100,42 @@ async def extract_resume_data(files: List[UploadFile] = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing files: {str(e)}")
 
+@app.post("/extract-job-description")
+async def extract_job_description(request: JobDescriptionRequest):
+    """
+    Process job description text using Gemini API
+    """
+    try:
+        if not request.job_description or not request.job_description.strip():
+            raise HTTPException(status_code=400, detail="Job description is required")
+        
+        # Here you would typically process the job description with your LLM
+        # For now, we'll just return the processed text
+        job_description_data = request.job_description.strip()
+        
+        return {
+            "success": True,
+            "job_description_data": job_description_data
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing job description: {str(e)}")
+
+@app.post("/candidate-fit")
+async def candidate_fit(request: CandidateFitRequest):
+    """
+    Compare resume and job description, return fit summary and percentage.
+    """
+    try:
+        evaluator = CandidateFitEvaluator()
+        result = evaluator.evaluate_fit(request.resume_data, request.job_description_data)
+        if result:
+            return {"success": True, "fit_result": result}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to evaluate candidate fit.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error evaluating candidate fit: {str(e)}")
+
 @app.post("/download-data")
 async def download_data(request: DownloadRequest):
     """
@@ -104,7 +149,7 @@ async def download_data(request: DownloadRequest):
             return create_json_response(data)
         elif format_type == "csv":
             return create_csv_response(data)
-        elif format_type == "excel":
+        elif format_type in ["excel", "xlsx"]:
             return create_excel_response(data)
         elif format_type == "pdf":
             return create_pdf_response(data)
@@ -143,19 +188,28 @@ def create_csv_response(data):
             
             # Extract skills
             if "skills" in resume:
-                flat_resume["skills"] = ", ".join(resume["skills"])
+                if isinstance(resume["skills"], list):
+                    flat_resume["skills"] = ", ".join(resume["skills"])
+                else:
+                    flat_resume["skills"] = str(resume["skills"])
             
             # Extract experience
             if "experience" in resume:
                 for i, exp in enumerate(resume["experience"]):
-                    for key, value in exp.items():
-                        flat_resume[f"experience_{i+1}_{key}"] = value
+                    if isinstance(exp, dict):
+                        for key, value in exp.items():
+                            flat_resume[f"experience_{i+1}_{key}"] = value
+                    else:
+                        flat_resume[f"experience_{i+1}"] = str(exp)
             
             # Extract education
             if "education" in resume:
                 for i, edu in enumerate(resume["education"]):
-                    for key, value in edu.items():
-                        flat_resume[f"education_{i+1}_{key}"] = value
+                    if isinstance(edu, dict):
+                        for key, value in edu.items():
+                            flat_resume[f"education_{i+1}_{key}"] = value
+                    else:
+                        flat_resume[f"education_{i+1}"] = str(edu)
             
             flattened_data.append(flat_resume)
     
@@ -174,47 +228,52 @@ def create_excel_response(data):
     """Create Excel file response in .xlsx format"""
     output = BytesIO()
     
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Create summary sheet
-        summary_data = []
+    try:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # Create summary sheet
+            summary_data = []
+            
+            if "extracted_data" in data:
+                for resume in data["extracted_data"]:
+                    summary_row = {
+                        "Filename": resume.get("filename", ""),
+                        "Name": resume.get("personal_info", {}).get("name", ""),
+                        "Email": resume.get("personal_info", {}).get("email", ""),
+                        "Phone": resume.get("personal_info", {}).get("phone", ""),
+                        "Skills Count": len(resume.get("skills", [])) if isinstance(resume.get("skills"), list) else 0,
+                        "Experience Count": len(resume.get("experience", [])) if isinstance(resume.get("experience"), list) else 0,
+                        "Education Count": len(resume.get("education", [])) if isinstance(resume.get("education"), list) else 0
+                    }
+                    summary_data.append(summary_row)
+            
+            if summary_data:
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Create detailed sheet
+            detailed_data = []
+            if "extracted_data" in data:
+                for resume in data["extracted_data"]:
+                    detailed_row = {
+                        "filename": resume.get("filename", ""),
+                        "full_data": json.dumps(resume, indent=2, ensure_ascii=False)
+                    }
+                    detailed_data.append(detailed_row)
+            
+            if detailed_data:
+                detailed_df = pd.DataFrame(detailed_data)
+                detailed_df.to_excel(writer, sheet_name='Detailed', index=False)
         
-        if "extracted_data" in data:
-            for resume in data["extracted_data"]:
-                summary_row = {
-                    "Filename": resume.get("filename", ""),
-                    "Name": resume.get("personal_info", {}).get("name", ""),
-                    "Email": resume.get("personal_info", {}).get("email", ""),
-                    "Phone": resume.get("personal_info", {}).get("phone", ""),
-                    "Skills Count": len(resume.get("skills", [])),
-                    "Experience Count": len(resume.get("experience", [])),
-                    "Education Count": len(resume.get("education", []))
-                }
-                summary_data.append(summary_row)
+        output.seek(0)
         
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=resume_data.xlsx"}
+        )
         
-        # Create detailed sheet
-        detailed_data = []
-        if "extracted_data" in data:
-            for resume in data["extracted_data"]:
-                detailed_row = {
-                    "filename": resume.get("filename", ""),
-                    "full_data": json.dumps(resume, indent=2)
-                }
-                detailed_data.append(detailed_row)
-        
-        detailed_df = pd.DataFrame(detailed_data)
-        detailed_df.to_excel(writer, sheet_name='Detailed', index=False)
-    
-    output.seek(0)
-    
-    return StreamingResponse(
-        output,
-        # Corrected media_type for .xlsx files
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=resume_data.xlsx"}
-    )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating Excel file: {str(e)}")
 
 def create_pdf_response(data):
     """Create PDF report response"""
@@ -259,7 +318,10 @@ def create_pdf_response(data):
             if "skills" in resume and resume["skills"]:
                 skills_title = Paragraph("Skills:", styles['Heading3'])
                 story.append(skills_title)
-                skills_text = ", ".join(resume["skills"])
+                if isinstance(resume["skills"], list):
+                    skills_text = ", ".join(resume["skills"])
+                else:
+                    skills_text = str(resume["skills"])
                 skills_para = Paragraph(skills_text, styles['Normal'])
                 story.append(skills_para)
                 story.append(Spacer(1, 6))
@@ -269,7 +331,10 @@ def create_pdf_response(data):
                 exp_title = Paragraph("Experience:", styles['Heading3'])
                 story.append(exp_title)
                 for exp in resume["experience"]:
-                    exp_text = f"{exp.get('title', 'N/A')} at {exp.get('company', 'N/A')} ({exp.get('duration', 'N/A')})"
+                    if isinstance(exp, dict):
+                        exp_text = f"{exp.get('title', 'N/A')} at {exp.get('company', 'N/A')} ({exp.get('duration', 'N/A')})"
+                    else:
+                        exp_text = str(exp)
                     exp_para = Paragraph(exp_text, styles['Normal'])
                     story.append(exp_para)
                 story.append(Spacer(1, 6))
@@ -279,7 +344,10 @@ def create_pdf_response(data):
                 edu_title = Paragraph("Education:", styles['Heading3'])
                 story.append(edu_title)
                 for edu in resume["education"]:
-                    edu_text = f"{edu.get('degree', 'N/A')} from {edu.get('institution', 'N/A')} ({edu.get('year', 'N/A')})"
+                    if isinstance(edu, dict):
+                        edu_text = f"{edu.get('degree', 'N/A')} from {edu.get('institution', 'N/A')} ({edu.get('year', 'N/A')})"
+                    else:
+                        edu_text = str(edu)
                     edu_para = Paragraph(edu_text, styles['Normal'])
                     story.append(edu_para)
                 story.append(Spacer(1, 12))
