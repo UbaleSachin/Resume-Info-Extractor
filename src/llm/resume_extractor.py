@@ -102,18 +102,12 @@ class ResumeExtractor:
                 {
                     "title": "Job title",
                     "company": "Company name",
-                    "location": "Job location",
                     "duration": "Start date - End date",
-                    "description": "Job description and achievements"
                 }
             ],
             "education": [
                 {
                     "degree": "Degree name",
-                    "institution": "Institution name",
-                    "location": "Institution location",
-                    "year": "Graduation year or duration",
-                    "gpa": "GPA if mentioned"
                 }
             ],
             "certifications": [
