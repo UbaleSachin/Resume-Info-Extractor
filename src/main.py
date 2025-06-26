@@ -13,6 +13,7 @@ from src.llm.resume_extractor import ResumeExtractor
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Resume Extractor API", version="1.0.0")
 
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Initialize the resume extractor
 resume_extractor = ResumeExtractor()
@@ -173,27 +175,67 @@ def create_csv_response(data):
 def create_excel_response(data):
     """Create Excel file response in .xlsx format"""
     output = BytesIO()
-    
+
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Create summary sheet
         summary_data = []
-        
+
         if "extracted_data" in data:
             for resume in data["extracted_data"]:
+                # Skills as comma-separated string
+                skills = resume.get("skills", [])
+                if isinstance(skills, list):
+                    skills = ", ".join(skills)
+                else:
+                    skills = str(skills)
+
+                # Education as comma-separated string of values
+                education = resume.get("education", [])
+                if isinstance(education, list):
+                    edu_values = []
+                    for edu in education:
+                        if isinstance(edu, dict):
+                            edu_values.extend([str(v) for v in edu.values()])
+                        else:
+                            edu_values.append(str(edu))
+                    education = ", ".join(edu_values)
+                else:
+                    education = str(education)
+
+                # Experience as comma-separated string of values
+                experience = resume.get("experience", [])
+                if isinstance(experience, list):
+                    exp_values = []
+                    for exp in experience:
+                        if isinstance(exp, dict):
+                            exp_values.extend([str(v) for v in exp.values()])
+                        else:
+                            exp_values.append(str(exp))
+                    experience = ", ".join(exp_values)
+                else:
+                    experience = str(experience)
+
+                # Get the most recent experience title if available
+                experience_list = resume.get("experience", [])
+                designation = ""
+                if isinstance(experience_list, list) and experience_list:
+                    designation = experience_list[0].get("title", "")
+
                 summary_row = {
-                    "Filename": resume.get("filename", ""),
                     "Name": resume.get("personal_info", {}).get("name", ""),
                     "Email": resume.get("personal_info", {}).get("email", ""),
                     "Phone": resume.get("personal_info", {}).get("phone", ""),
-                    "Skills": resume.get("skills", []),
-                    "Experience": resume.get("experience", []),
-                    "Education": resume.get("education", [])
+                    "Skills": skills,
+                    "Experience": experience,
+                    "Education": education,
+                    "Location": resume.get("personal_info", {}).get("location", ""),
+                    "Designation": designation,
                 }
                 summary_data.append(summary_row)
-        
+
         summary_df = pd.DataFrame(summary_data)
         summary_df.to_excel(writer, sheet_name='Summary', index=False)
-        
+
         # Create detailed sheet
         detailed_data = []
         if "extracted_data" in data:
@@ -203,15 +245,14 @@ def create_excel_response(data):
                     "full_data": json.dumps(resume, indent=2)
                 }
                 detailed_data.append(detailed_row)
-        
+
         detailed_df = pd.DataFrame(detailed_data)
         detailed_df.to_excel(writer, sheet_name='Detailed', index=False)
-    
+
     output.seek(0)
-    
+
     return StreamingResponse(
         output,
-        # Corrected media_type for .xlsx files
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=resume_data.xlsx"}
     )
