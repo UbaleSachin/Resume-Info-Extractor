@@ -390,18 +390,30 @@ class ResumeExtractor {
                 formData.append('files', file);
             });
             
-            const response = await fetch('https://resume-info-extractor.up.railway.app/extract-resume', {
+            const response = await fetch('http://localhost:8000/extract-resume', {
                 method: 'POST',
                 body: formData
             });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
             const data = await response.json();
-            this.extractedData = data;
-            this.displayResults(data);
+            if (!data.success || !data.job_id) {
+                throw new Error('Failed to start extraction job.');
+            }
+            const jobId = data.job_id;
+
+            // Poll for extraction status
+            let extractedData = null;
+            while (true) {
+                await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
+                const pollResp = await fetch(`http://localhost:8000/extract-resume-/${jobId}`);
+                const pollData = await pollResp.json();
+                if (pollData.status === 'completed') {
+                    extractedData = pollData;
+                    break;
+                }
+                // Optionally, show progress to user here
+            }
+            this.extractedData = extractedData;
+            this.displayResults(extractedData);
             
         } catch (error) {
            console.error('Error extracting data:', error);
@@ -448,7 +460,7 @@ class ResumeExtractor {
         try {
             // Send all resumes for evaluation
             const resumes = this.extractedData.extracted_data || [];
-            const response = await fetch('https://resume-info-extractor.up.railway.app/candidate-fit', {
+            const response = await fetch('http://localhost:8000/candidate-fit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -456,14 +468,25 @@ class ResumeExtractor {
                     job_description_data: this.jobDescriptionData
                 })
             });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-            }
-
             const data = await response.json();
-            this.displayCandidateFit(data);
+            if (!data.success || !data.job_id) {
+                throw new Error('Failed to start candidate fit job.');
+            }
+            const jobId = data.job_id;
+
+            // Poll for candidate fit status
+            let fitData = null;
+            while (true) {
+                await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
+                const pollResp = await fetch(`http://localhost:8000/candidate-fit/${jobId}`);
+                const pollData = await pollResp.json();
+                if (pollData.status === 'completed') {
+                    fitData = pollData;
+                    break;
+                }
+                // Optionally, show progress to user here
+            }
+            this.displayCandidateFit(fitData);
         } catch (error) {
             this.showError(`Failed to fetch candidate fit summary: ${error.message}`);
         }
@@ -616,6 +639,8 @@ class ResumeExtractor {
                         return e;
                     }).join(' | ')
                     : (resume.experience || '');
+
+                const description = resume.experience?.description || '';
                 
                 table += `<tr>
                     <td style="border:1px solid #ddd;padding:8px;">${idx + 1}</td>
@@ -627,6 +652,7 @@ class ResumeExtractor {
                     <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${skills}</td>
                     <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${education}</td>
                     <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${experience}</td>
+                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${designation}</td>
                 </tr>`;
             });
             table += '</tbody></table></div>';
@@ -650,7 +676,7 @@ class ResumeExtractor {
         const format = 'xlsx';
         
         try {
-            const response = await fetch('https://resume-info-extractor.up.railway.app/download-data', {
+            const response = await fetch('http://localhost:8000/download-data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

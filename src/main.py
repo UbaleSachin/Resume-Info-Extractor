@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -9,6 +9,9 @@ import pandas as pd
 from io import BytesIO, StringIO
 import tempfile
 import os
+import uuid
+import threading
+import time
 
 from src.llm.resume_extractor import ResumeExtractor
 from src.llm.candidate_fit import CandidateFitEvaluator
@@ -17,6 +20,11 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
 app = FastAPI(title="Resume Extractor API", version="1.0.0")
+
+extraction_jobs = {}
+candidate_fit_jobs = {}
+extraction_lock = threading.Lock()
+fit_lock = threading.Lock()
 
 # Enable CORS for frontend communication
 app.add_middleware(
@@ -41,64 +49,58 @@ class CandidateFitRequest(BaseModel):
     resume_data: List[Dict[str, Any]]
     job_description_data: str  # This should be string, not Dict
 
+def process_extraction_job(job_id, files, resume_extractor):
+    results = []
+    batch_size = 15
+    for i in range(0, len(files), batch_size):
+        batch = files[i:i + batch_size]
+        for file_info in batch:
+            file_path, filename = file_info
+            try:
+                result = resume_extractor.extract_from_file(file_path, filename)
+                results.append(result)
+            except Exception as e:
+                results.append({"filename": filename, "error": str(e), "success": False})
+    with extraction_lock:
+        extraction_jobs[job_id]['status'] = 'completed'
+        extraction_jobs[job_id]['results'] = results
+
+
 @app.get("/")
 async def root():
     return {"message": "Resume Extractor API is running"}
 
 @app.post("/extract-resume")
-async def extract_resume_data(files: List[UploadFile] = File(...)):
+async def extract_resume_data(files: List[UploadFile] = File(...), background_tasks: BackgroundTasks = None):
     """
     Extract data from uploaded resume files using Gemini API
     """
-    try:
-        if not files:
-            raise HTTPException(status_code=400, detail="No files uploaded")
-        
-        extracted_data = []
-        
-        for file in files:
-            # Validate file type
-            allowed_types = [
-                'application/pdf',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'application/vnd.ms-excel',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'text/plain'
-            ]
-            
-            if file.content_type not in allowed_types and not any(
-                file.filename.lower().endswith(ext) 
-                for ext in ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt']
-            ):
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Unsupported file type: {file.filename}"
-                )
-            
-            # Save uploaded file temporarily
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
-                content = await file.read()
-                tmp_file.write(content)
-                tmp_file_path = tmp_file.name
-            
-            try:
-                # Extract data using Gemini API
-                file_data = resume_extractor.extract_from_file(tmp_file_path, file.filename)
-                extracted_data.append(file_data)
-                
-            finally:
-                # Clean up temporary file
-                os.unlink(tmp_file_path)
-        
-        return {
-            "success": True,
-            "total_files": len(files),
-            "extracted_data": extracted_data
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing files: {str(e)}")
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+    
+    job_id =str(uuid.uuid4())
+    file_infos = []
+    for file in files:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        file_infos.append((tmp_file_path, file.filename))
+    with extraction_lock:
+        extraction_jobs[job_id] = {'status': 'pending', 'results': None}
+    background_tasks.add_task(process_extraction_job, job_id, file_infos, resume_extractor)
+    return {'success': True, 'job_id': job_id, 'status': 'pending'}
+
+@app.get("/extract-resume-/{job_id}")
+async def get_extraction_status(job_id: str):
+    with extraction_lock:
+        job = extraction_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job['status'] == 'completed':
+            return {'success': True, 'status': 'completed', 'extracted_data': job['results']}
+        else:
+            return {'success': True, 'status': job['status']}
 
 @app.post("/extract-job-description")
 async def extract_job_description(request: JobDescriptionRequest):
@@ -121,27 +123,44 @@ async def extract_job_description(request: JobDescriptionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing job description: {str(e)}")
 
+def process_candidate_fit_job(job_id, resumes, job_description, evaluator):
+    results = []
+    batch_size = 15  # Gemini API limit
+    for i in range(0, len(resumes), batch_size):
+        batch = resumes[i:i+batch_size]
+        for resume in batch:
+            result = evaluator.evaluate_fit(resume, job_description)
+            if result:
+                result['candidate_name'] = resume.get('personal_info', {}).get('name', 'Unknown')
+                results.append(result)
+        if i + batch_size < len(resumes):
+            time.sleep(60)
+    with fit_lock:
+        candidate_fit_jobs[job_id]['status'] = 'completed'
+        candidate_fit_jobs[job_id]['results'] = results
+
 @app.post("/candidate-fit")
-async def candidate_fit(request: CandidateFitRequest):
+async def candidate_fit(request: CandidateFitRequest, background_tasks: BackgroundTasks):
     """
     Compare multiple resumes and job description, return fit summary and percentage for each.
     """
-    try:
-        evaluator = CandidateFitEvaluator()
-        results = []
-        for resume in request.resume_data:
-            result = evaluator.evaluate_fit(resume, request.job_description_data)
-            if result:
-                # Attach candidate name for frontend display
-                result['candidate_name'] = resume.get('personal_info', {}).get('name', 'Unknown')
-                results.append(result)
-        if results:
-            return {"success": True, "fit_results": results}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to evaluate candidate fit.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error evaluating candidate fit: {str(e)}")
+    job_id = str(uuid.uuid4())
+    with fit_lock:
+        candidate_fit_jobs[job_id] = {'status': 'pending', 'results': None}
+    background_tasks.add_task(process_candidate_fit_job, job_id, request.resume_data, request.job_description_data, CandidateFitEvaluator())
+    return {"success": True, "job_id": job_id, "status": "pending"}
 
+@app.get("/candidate-fit/{job_id}")
+async def get_candidate_fit_job(job_id: str):
+    with fit_lock:
+        job = candidate_fit_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job['status'] == 'completed':
+            return {"success": True, "status": "completed", "fit_results": job['results']}
+        else:
+            return {"success": True, "status": job['status']}
+        
 @app.post("/download-data")
 async def download_data(request: DownloadRequest):
     """
