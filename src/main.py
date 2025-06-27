@@ -38,7 +38,7 @@ class JobDescriptionRequest(BaseModel):
     job_description: str
 
 class CandidateFitRequest(BaseModel):
-    resume_data: Dict[str, Any]
+    resume_data: List[Dict[str, Any]]
     job_description_data: str  # This should be string, not Dict
 
 @app.get("/")
@@ -124,13 +124,19 @@ async def extract_job_description(request: JobDescriptionRequest):
 @app.post("/candidate-fit")
 async def candidate_fit(request: CandidateFitRequest):
     """
-    Compare resume and job description, return fit summary and percentage.
+    Compare multiple resumes and job description, return fit summary and percentage for each.
     """
     try:
         evaluator = CandidateFitEvaluator()
-        result = evaluator.evaluate_fit(request.resume_data, request.job_description_data)
-        if result:
-            return {"success": True, "fit_result": result}
+        results = []
+        for resume in request.resume_data:
+            result = evaluator.evaluate_fit(resume, request.job_description_data)
+            if result:
+                # Attach candidate name for frontend display
+                result['candidate_name'] = resume.get('personal_info', {}).get('name', 'Unknown')
+                results.append(result)
+        if results:
+            return {"success": True, "fit_results": results}
         else:
             raise HTTPException(status_code=500, detail="Failed to evaluate candidate fit.")
     except Exception as e:
@@ -242,7 +248,8 @@ def create_excel_response(data):
                         "Phone": resume.get("personal_info", {}).get("phone", ""),
                         "Skills Count": resume.get("skills", []) if isinstance(resume.get("skills"), list) else 0,
                         "Experience Count": resume.get("experience", []) if isinstance(resume.get("experience"), list) else 0,
-                        "Education Count": resume.get("education", []) if isinstance(resume.get("education"), list) else 0
+                        "Education Count": resume.get("education", []) if isinstance(resume.get("education"), list) else 0,
+                        "Designation": resume.get("experience", {}).get("title", ""),
                     }
                     summary_data.append(summary_row)
             

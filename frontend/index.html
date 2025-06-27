@@ -13,22 +13,38 @@
             <p>Upload resumes in multiple formats and extract structured data</p>
         </header>
 
-        <div class="upload-section">
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">📄</div>
-                <h3>Drop your resume files here</h3>
-                <p>or click to browse</p>
-                <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.txt">
-                <div class="supported-formats">
-                    <span>Supported formats: PDF, DOC, DOCX, XLS, XLSX, TXT</span>
+        <div class="main-flex">
+            <div class="upload-section">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📄</div>
+                    <h3>Drop your resume files here</h3>
+                    <p>or click to browse</p>
+                    <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.txt">
+                    <div class="supported-formats">
+                        <span>Supported formats: PDF, DOC, DOCX, XLS, XLSX, TXT</span>
+                    </div>
+                    <!-- Selected Files Section moved inside upload-area -->
+                    <div class="files-preview" id="filesPreview" style="display: none; margin-top: 30px;">
+                        <h3>Selected Files</h3>
+                        <div class="files-list" id="filesList"></div>
+                        <div id="filePreviews"></div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn btn-primary" id="generateBtn">Generate</button>
+                            <button class="btn btn-danger" id="removeAllBtn">Remove All</button>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div class="files-preview" id="filesPreview" style="display: none;">
-            <h3>Selected Files</h3>
-            <div class="files-list" id="filesList"></div>
-            <button class="btn btn-primary" id="extractBtn">Extract Data</button>
+            <!-- New Job Description Drop Section -->
+            <div class="upload-section">
+                <div class="upload-area" id="jdUploadArea" style="min-height: 300px;">
+                    <div class="upload-icon">📝</div>
+                    <h3>Drop Job Description Here</h3>
+                    <p>or click to paste</p>
+                    <textarea id="jdInput" placeholder="Paste or drop job description here..." style="width:100%;height:120px;resize:vertical;border-radius:12px;padding:12px;margin-top:15px;font-size:1rem;"></textarea>
+                </div>
+            </div>
         </div>
 
         <div class="loading" id="loading" style="display: none;">
@@ -41,7 +57,7 @@
             <div class="download-options">
                 <button class="btn btn-success" id="downloadBtn">Download Excel</button>
             </div>
-            <!--div class="data-preview" id="dataPreview"></div> -->
+            <div class="data-preview" id="dataPreview"></div>
         </div>
 
         <div class="error-message" id="errorMessage" style="display: none;">
