@@ -249,7 +249,7 @@ def create_excel_response(data):
                         "Skills Count": resume.get("skills", []) if isinstance(resume.get("skills"), list) else 0,
                         "Experience Count": resume.get("experience", []) if isinstance(resume.get("experience"), list) else 0,
                         "Education Count": resume.get("education", []) if isinstance(resume.get("education"), list) else 0,
-                        "Designation": resume.get("experience", {}).get("title", ""),
+                        "Designation": resume.get("experience", []).get("title", ""),
                     }
                     summary_data.append(summary_row)
             

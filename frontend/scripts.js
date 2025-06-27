@@ -390,7 +390,7 @@ class ResumeExtractor {
                 formData.append('files', file);
             });
             
-            const response = await fetch('http://localhost:8000/extract-resume', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/extract-resume', {
                 method: 'POST',
                 body: formData
             });
@@ -448,7 +448,7 @@ class ResumeExtractor {
         try {
             // Send all resumes for evaluation
             const resumes = this.extractedData.extracted_data || [];
-            const response = await fetch('http://localhost:8000/candidate-fit', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/candidate-fit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -650,7 +650,7 @@ class ResumeExtractor {
         const format = 'xlsx';
         
         try {
-            const response = await fetch('http://localhost:8000/download-data', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/download-data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
