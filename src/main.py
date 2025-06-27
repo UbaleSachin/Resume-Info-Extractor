@@ -242,14 +242,21 @@ def create_excel_response(data):
             if "extracted_data" in data:
                 for resume in data["extracted_data"]:
                     summary_row = {
-                        "Filename": resume.get("filename", ""),
+                        #"Filename": resume.get("filename", ""),
                         "Name": resume.get("personal_info", {}).get("name", ""),
                         "Email": resume.get("personal_info", {}).get("email", ""),
                         "Phone": resume.get("personal_info", {}).get("phone", ""),
-                        "Skills Count": resume.get("skills", []) if isinstance(resume.get("skills"), list) else 0,
-                        "Experience Count": resume.get("experience", []) if isinstance(resume.get("experience"), list) else 0,
-                        "Education Count": resume.get("education", []) if isinstance(resume.get("education"), list) else 0,
-                        "Designation": resume.get("experience", []).get("title", ""),
+                        "Skills": ", ".join(resume.get("skills", [])) if isinstance(resume.get("skills"), list) else str(resume.get("skills", "")),
+                        "Experience": "; ".join(
+                            f"{exp.get('title', '')} at {exp.get('company', '')}" 
+                            for exp in resume.get("experience", []) if isinstance(exp, dict)
+                        ) if isinstance(resume.get("experience", []), list) else "",
+                        "Education": "; ".join(
+                            f"{edu.get('degree', '')} from {edu.get('institution', '')}" 
+                            for edu in resume.get("education", []) if isinstance(edu, dict)
+                        ) if isinstance(resume.get("education", []), list) else "",
+                        "Designation": resume.get("experience", [{}])[0].get("title", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
+                        "Description": resume.get("experience", [{}])[0].get("description", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
                     }
                     summary_data.append(summary_row)
             
