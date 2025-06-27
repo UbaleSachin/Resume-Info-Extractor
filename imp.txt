@@ -1,0 +1,8 @@
+remove Filename, add LOCATION, DESIGNATION
+fix the window opening two time after adding resume.
+add remove all option in web site to remeove resume.
+
+clean the data in skills, experience, and education.
+
+in education keep only the data like bsc, engg, mba.
+in experience keep only DESIGNATION, company name, time.

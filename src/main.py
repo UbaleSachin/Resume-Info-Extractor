@@ -240,9 +240,9 @@ def create_excel_response(data):
                         "Name": resume.get("personal_info", {}).get("name", ""),
                         "Email": resume.get("personal_info", {}).get("email", ""),
                         "Phone": resume.get("personal_info", {}).get("phone", ""),
-                        "Skills Count": len(resume.get("skills", [])) if isinstance(resume.get("skills"), list) else 0,
-                        "Experience Count": len(resume.get("experience", [])) if isinstance(resume.get("experience"), list) else 0,
-                        "Education Count": len(resume.get("education", [])) if isinstance(resume.get("education"), list) else 0
+                        "Skills Count": resume.get("skills", []) if isinstance(resume.get("skills"), list) else 0,
+                        "Experience Count": resume.get("experience", []) if isinstance(resume.get("experience"), list) else 0,
+                        "Education Count": resume.get("education", []) if isinstance(resume.get("education"), list) else 0
                     }
                     summary_data.append(summary_row)
             
