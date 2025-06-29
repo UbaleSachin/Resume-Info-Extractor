@@ -518,7 +518,7 @@ class ResumeExtractor {
         // Support multiple results
         const fitResults = data && (data.fit_results || (data.fit_result && [data.fit_result]));
         if (fitResults && fitResults.length > 0) {
-            let html = `<div class="fit-list">`;
+            let html = `<div class="fit-list${fitResults.length > 10 ? ' fit-list-scroll' : ''}">`;
             fitResults.forEach((fitResult, idx) => {
                 const candidateName = fitResult.candidate_name || `Candidate ${idx + 1}`;
                 html += `
