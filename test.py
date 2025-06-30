@@ -129,13 +129,13 @@ class ProcessingQueue:
         self.max_concurrent = max_concurrent_jobs
         self.lock = asyncio.Lock()
         self.worker_tasks = []
-        #self._start_workers()
+        self._start_workers()
     
     def _start_workers(self):
         """Start worker tasks to process the queue"""
         for _ in range(self.max_concurrent):
             task = asyncio.create_task(self._worker())
-            #self.worker_tasks.append(task)
+            self.worker_tasks.append(task)
     
     async def _worker(self):
         """Worker that processes jobs from the queue"""
@@ -343,10 +343,6 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
-
-@app.on_event("startup")
-async def start_processing_workers():
-    processing_queue._start_workers()
 
 # API Endpoints
 @app.get("/")

@@ -33,34 +33,30 @@ class ResumeExtractor:
             'groq': {
                 'base_url': 'https://api.groq.com/openai/v1',
                 'models': [
-                    'meta-llama/llama-4-scout-17b-16e-instruct',
-                    'llama3-8b-8192',
-                    'mixtral-8x7b-32768'
+                    ('llama3-70b-8192', 14400),
+                    ('llama3-8b-8192', 14400),
+                    ('llama-3.3-70b-versatile', 1000),
+                    ('mixtral-saba-24b', 1000),
                 ],
                 'api_key': self.groq_api_key
-            },
-            'openai': {
-                'base_url': 'https://api.openai.com/v1',
-                'models': [
-                    'gpt-4o',
-                    'gpt-4o-mini',
-                    'gpt-4-turbo'
-                ],
-                'api_key': self.openai_api_key
             },
             'gemini': {
                 'base_url': 'https://generativelanguage.googleapis.com/v1beta',
                 'models': [
-                    'gemini-2.0-flash',
-                    'gemini-1.5-pro',
-                    'gemini-1.5-flash'
+                    ('gemma-3-27b-it', 14400),
+                    ('gemma-3-12b-it', 14400),
+                    ('gemma-3n-e4b-it', 14400),
+                    ('gemma-3n-e2b-it', 14400),
+                    ('gemini-2.0-flash-lite', 1500),
+                    ('gemini-2.0-flash', 1500),
+                    ('gemini-2.5-flash-preview-04-17', 500),
                 ],
                 'api_key': self.gemini_api_key
             }
         }
         
         # Current provider and model
-        self.current_provider = 'gemini'  # Default to Gemini
+        self.current_provider = 'groq'  # Default to Gemini
         self.current_model_index = 0
         
         # Determine which provider to use based on available API keys
@@ -73,12 +69,8 @@ class ResumeExtractor:
         
         # Usage tracking
         self.usage_file = 'resume_api_usage_tracking.json'
-        self.daily_limits = {
-            'groq': 14400,   # Groq free tier: 14,400 requests/day
-            'openai': 1000,  # Conservative limit for OpenAI
-            'gemini': 1500   # Gemini free tier: 1,500 requests/day
-        }
         self.usage_data = self._load_usage_data()
+
         
         # Define extraction prompt
         self.extraction_prompt = """
@@ -217,14 +209,15 @@ class ResumeExtractor:
 
     def _can_use_provider(self, provider: str, count: int = 1) -> bool:
         """Check if a provider can be used without exceeding daily limit."""
-        current_usage = self._get_today_usage(provider)
-        daily_limit = self.daily_limits.get(provider, 1000)
+        # Check if current model for provider is within daily limit
+        current_model, daily_limit = self.api_providers[provider]['models'][self.current_model_index]
+        current_usage = self._get_today_usage(provider, current_model)
         return (current_usage + count) <= daily_limit
 
     def get_current_model(self) -> str:
         """Get the current model being used."""
         provider_config = self.api_providers[self.current_provider]
-        return provider_config['models'][self.current_model_index]
+        return provider_config['models'][self.current_model_index][0]
 
     def _make_gemini_api_call(self, text_content: str, model: str) -> Optional[str]:
         """Make API call to Gemini for resume extraction."""
