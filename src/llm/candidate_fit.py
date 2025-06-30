@@ -50,6 +50,8 @@ class CandidateFitEvaluator:
 
         self.prompt_template = """You are an expert HR recruiter and AI assistant. Given the following job description and candidate resume data, analyze and compare the candidate's qualifications, skills, and experience to the job requirements.
 
+{custom_instructions}
+
 Return a JSON object with:
 - "summary": A concise summary (2-4 sentences) explaining if the candidate is a good fit for the job, mentioning key matches and gaps.
 - "fit_percentage": An approximate percentage (0-100) representing how well the candidate fits the job (e.g., 80 for strong fit, 40 for weak fit).
@@ -121,14 +123,155 @@ Candidate Resume:
                 return True
         return False
 
-    def evaluate_fit(self, resume_data: Dict[str, Any], job_description_data: Union[str, Dict[str, Any]], max_retries=3) -> Optional[Dict[str, Any]]:
-        # Prepare prompt
+    def _build_custom_instructions(self, fit_options: Optional[Dict[str, Any]]) -> str:
+        """Build custom instructions based on fit_options"""
+        if not fit_options:
+            return ""
+        
+        instructions = []
+        
+        # Priority keywords
+        if fit_options.get("priority_keywords"):
+            keywords = fit_options["priority_keywords"]
+            if isinstance(keywords, list):
+                keywords = ", ".join(keywords)
+            instructions.append(f"Pay special attention to these priority keywords when evaluating fit: {keywords}")
+            instructions.append(f"MANDATORY: Check each of these priority keywords [{keywords}] against the candidate's resume. If found, add to 'key_matches'. If missing, add to 'key_gaps'.")
+        
+        # Required skills
+        if fit_options.get("required_skills"):
+            req_skills = fit_options["required_skills"]
+            if isinstance(req_skills, list):
+                req_skills = ", ".join(req_skills)
+            instructions.append(f"Required skills: {req_skills}")
+            instructions.append(f"MANDATORY: Check each required skill [{req_skills}] against the candidate's resume. If found, add to 'key_matches'. If missing, add to 'key_gaps'.")
+        
+        # Minimum experience requirements
+        if fit_options.get("min_experience"):
+            min_exp = fit_options["min_experience"]
+            instructions.append(f"The candidate must have at least {min_exp} years of relevant experience. Factor this heavily into your evaluation.")
+            instructions.append(f"MANDATORY: If candidate has {min_exp}+ years experience, add 'Meets minimum experience requirement ({min_exp}+ years)' to 'key_matches'. If less, add 'Lacks minimum experience requirement ({min_exp} years)' to 'key_gaps'.")
+        
+        # Educational requirements
+        if fit_options.get("edu_requirements"):
+            edu_req = fit_options["edu_requirements"]
+            instructions.append(f"Educational requirements: {edu_req}. Consider how well the candidate's education aligns with these requirements.")
+            instructions.append(f"MANDATORY: Check if candidate meets education requirement '{edu_req}'. If yes, add to 'key_matches'. If no, add to 'key_gaps'.")
+        
+        # Weighting configuration
+        weights = []
+        if fit_options.get("weight_skills"):
+            weights.append(f"Skills: {fit_options['weight_skills']}%")
+        if fit_options.get("weight_experience"):
+            weights.append(f"Experience: {fit_options['weight_experience']}%")
+        if fit_options.get("weight_education"):
+            weights.append(f"Education: {fit_options['weight_education']}%")
+        
+        if weights:
+            instructions.append(f"Use the following weightage when calculating fit percentage - {', '.join(weights)}")
+        
+        # Deal breakers
+        if fit_options.get("deal_breakers"):
+            deal_breakers = fit_options["deal_breakers"]
+            if isinstance(deal_breakers, list):
+                deal_breakers = ", ".join(deal_breakers)
+            instructions.append(f"These are deal breakers - if the candidate lacks any of these, significantly reduce the fit percentage: {deal_breakers}")
+            instructions.append(f"MANDATORY: Check each deal breaker [{deal_breakers}] against the candidate's resume. If found, add to 'key_matches'. If missing, add to 'key_gaps' and reduce fit percentage significantly.")
+        
+        # Nice to have skills
+        if fit_options.get("nice_to_have"):
+            nice_to_have = fit_options["nice_to_have"]
+            if isinstance(nice_to_have, list):
+                nice_to_have = ", ".join(nice_to_have)
+            instructions.append(f"These are nice-to-have skills that can boost the fit percentage: {nice_to_have}")
+            instructions.append(f"MANDATORY: Check each nice-to-have skill [{nice_to_have}] against the candidate's resume. If found, add to 'key_matches' with '(nice-to-have)' notation.")
+        
+        # Specific experience areas
+        if fit_options.get("experience_areas"):
+            exp_areas = fit_options["experience_areas"]
+            if isinstance(exp_areas, list):
+                exp_areas = ", ".join(exp_areas)
+            instructions.append(f"Required experience areas: {exp_areas}")
+            instructions.append(f"MANDATORY: Check each experience area [{exp_areas}] against the candidate's background. If found, add to 'key_matches'. If missing, add to 'key_gaps'.")
+        
+        # Technical skills
+        if fit_options.get("technical_skills"):
+            tech_skills = fit_options["technical_skills"]
+            if isinstance(tech_skills, list):
+                tech_skills = ", ".join(tech_skills)
+            instructions.append(f"Required technical skills: {tech_skills}")
+            instructions.append(f"MANDATORY: Check each technical skill [{tech_skills}] against the candidate's resume. If found, add to 'key_matches'. If missing, add to 'key_gaps'.")
+        
+        # Certifications
+        if fit_options.get("certifications"):
+            certs = fit_options["certifications"]
+            if isinstance(certs, list):
+                certs = ", ".join(certs)
+            instructions.append(f"Required/Preferred certifications: {certs}")
+            instructions.append(f"MANDATORY: Check each certification [{certs}] against the candidate's credentials. If found, add to 'key_matches'. If missing, add to 'key_gaps'.")
+        
+        # Location preferences
+        if fit_options.get("location_preference"):
+            location = fit_options["location_preference"]
+            instructions.append(f"Location preference: {location}. Consider geographical compatibility in your evaluation.")
+        
+        # Salary expectations
+        if fit_options.get("salary_range"):
+            salary = fit_options["salary_range"]
+            instructions.append(f"Salary range: {salary}. Consider if the candidate's expectations align with this range.")
+        
+        if instructions:
+            instructions.append(
+                "IMPORTANT: For every priority keyword, required skill, experience, or education requirement, "
+                "explicitly list each one in either 'key_matches' (if present) or 'key_gaps' (if missing). "
+                "Do not skip any. Be exhaustive."
+            )
+            return "EVALUATION GUIDELINES:\n" + "\n".join(f"- {instruction}" for instruction in instructions) + "\n"
+        
+        return ""
+
+    def evaluate_fit(self, resume_data: Dict[str, Any], job_description_data: Union[str, Dict[str, Any]], fit_options: Optional[Dict[str, Any]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
+        """
+        Evaluate candidate fit with optional customization parameters.
+        
+        Args:
+            resume_data: Dictionary containing candidate resume information
+            job_description_data: Job description as string or dictionary
+            fit_options: Optional dictionary with evaluation parameters:
+                - priority_keywords: List of important keywords to prioritize
+                - required_skills: List of mandatory skills
+                - min_experience: Minimum years of experience required
+                - edu_requirements: Educational requirements description
+                - weight_skills: Percentage weight for skills (0-100)
+                - weight_experience: Percentage weight for experience (0-100)  
+                - weight_education: Percentage weight for education (0-100)
+                - deal_breakers: List of must-have requirements
+                - nice_to_have: List of preferred but not required skills
+                - experience_areas: List of required experience areas
+                - technical_skills: List of required technical skills
+                - certifications: List of required/preferred certifications
+                - location_preference: Location requirements
+                - salary_range: Expected salary range
+            max_retries: Maximum number of API call retries
+            
+        Returns:
+            Dictionary with evaluation results or None if failed
+        """
+        # Prepare job description text
         if isinstance(job_description_data, dict):
             job_desc_text = json.dumps(job_description_data, indent=2, ensure_ascii=False)
         else:
             job_desc_text = str(job_description_data)
+        
+        # Prepare resume text
         resume_text = json.dumps(resume_data, indent=2, ensure_ascii=False)
+        
+        # Build custom instructions based on fit_options
+        custom_instructions = self._build_custom_instructions(fit_options)
+        
+        # Create the prompt
         prompt = self.prompt_template.format(
+            custom_instructions=custom_instructions,
             job_description=job_desc_text,
             resume=resume_text
         )

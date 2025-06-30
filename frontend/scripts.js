@@ -14,6 +14,39 @@ class ResumeExtractor {
         const downloadBtn = document.getElementById('downloadBtn');
         const removeAllBtn = document.getElementById('removeAllBtn');
         const generateBtn = document.getElementById('generateBtn');
+        const candidateFitBtn = document.getElementById('candidateFitBtn');
+
+        if (candidateFitBtn) {
+            candidateFitBtn.addEventListener('click', () => {
+                const priorityKeywords = document.getElementById('priorityKeywords').value;
+                const minExperience = document.getElementById('minExperience').value;
+                const eduRequirements = document.getElementById('eduRequirements').value;
+                const weightSkills = document.getElementById('weightSkills').value;
+                const weightExperience = document.getElementById('weightExperience').value;
+                const weightEducation = document.getElementById('weightEducation').value;
+
+                const fitOptions = {
+                    priority_keywords: priorityKeywords,
+                    min_experience: minExperience,
+                    edu_requirements: eduRequirements,
+                    weight_skills: weightSkills,
+                    weight_experience: weightExperience,
+                    weight_education: weightEducation
+                };
+
+                // Save to localStorage for use on candidate_fit.html
+                localStorage.setItem('fitOptions', JSON.stringify(fitOptions));
+                
+                // Save extracted data and job description to localStorage
+                if (this.extractedData && this.jobDescriptionData) {
+                    localStorage.setItem('extractedData', JSON.stringify(this.extractedData));
+                    localStorage.setItem('jobDescriptionData', this.jobDescriptionData);
+                    window.location.href = 'candidate_fit.html';
+                } else {
+                    this.showError('Please extract resumes and job description first.');
+                }
+            });
+        }
 
         if (generateBtn) {
             generateBtn.addEventListener('click', async (e) => {
@@ -450,129 +483,6 @@ class ResumeExtractor {
         }
     }
 
-    async fetchCandidateFit() {
-        if (!this.extractedData || !this.jobDescriptionData) {
-            this.showError('Please extract both resume data and job description first.');
-            return;
-        }
-        this.hideError();
-
-        try {
-            // Send all resumes for evaluation
-            const resumes = this.extractedData.extracted_data || [];
-            const response = await fetch('http://localhost:8000/candidate-fit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    resume_data: resumes,
-                    job_description_data: this.jobDescriptionData
-                })
-            });
-            const data = await response.json();
-            if (!data.success || !data.job_id) {
-                throw new Error('Failed to start candidate fit job.');
-            }
-            const jobId = data.job_id;
-
-            // Poll for candidate fit status
-            let fitData = null;
-            while (true) {
-                await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
-                const pollResp = await fetch(`http://localhost:8000/candidate-fit/${jobId}`);
-                const pollData = await pollResp.json();
-                if (pollData.status === 'completed') {
-                    fitData = pollData;
-                    break;
-                }
-                // Optionally, show progress to user here
-            }
-            this.displayCandidateFit(fitData);
-        } catch (error) {
-            this.showError(`Failed to fetch candidate fit summary: ${error.message}`);
-        }
-    }
-
-    displayCandidateFit(data) {
-        let candidateFitSection = document.getElementById('candidateFitSection');
-        if (!candidateFitSection) {
-            const resultsSection = document.getElementById('resultsSection');
-            candidateFitSection = document.createElement('div');
-            candidateFitSection.id = 'candidateFitSection';
-            candidateFitSection.className = 'candidate-fit-section';
-            candidateFitSection.style.marginBottom = '30px';
-            candidateFitSection.innerHTML = `
-                <h3 style="margin-bottom: 15px;">Candidate Fit Analysis</h3>
-                <div id="candidateFitContent"></div>
-            `;
-            const downloadOptions = document.querySelector('.download-options');
-            if (resultsSection && downloadOptions) {
-                resultsSection.insertBefore(candidateFitSection, downloadOptions);
-            } else if (resultsSection) {
-                resultsSection.prepend(candidateFitSection);
-            }
-        }
-
-        const fitContent = document.getElementById('candidateFitContent');
-        if (!fitContent) return;
-
-        // Support multiple results
-        const fitResults = data && (data.fit_results || (data.fit_result && [data.fit_result]));
-        if (fitResults && fitResults.length > 0) {
-            let html = `<div class="fit-list${fitResults.length > 10 ? ' fit-list-scroll' : ''}">`;
-            fitResults.forEach((fitResult, idx) => {
-                const candidateName = fitResult.candidate_name || `Candidate ${idx + 1}`;
-                html += `
-                    <div class="fit-item" style="margin-bottom:18px;">
-                        <div class="fit-header" style="display:flex;align-items:center;cursor:pointer;gap:18px;padding:12px 0;" data-fit-index="${idx}">
-                            <span style="font-weight:700;font-size:1.1rem;">${candidateName}</span>
-                            <span class="fit-score-badge" style="margin-left:auto;background:#e9ecef;padding:6px 16px;border-radius:16px;font-weight:600;color:#333;">
-                                ${fitResult.fit_percentage}%
-                            </span>
-                            <span class="expand-arrow" style="margin-left:10px;transition:transform 0.2s;">&#9654;</span>
-                        </div>
-                        <div class="fit-details" style="display:none;padding:12px 0 0 0;">
-                            <div class="fit-summary" style="margin-bottom:12px;">${fitResult.summary || ''}</div>
-                            ${fitResult.key_matches && fitResult.key_matches.length > 0 ? `
-                                <div class="fit-matches" style="margin-bottom:10px;">
-                                    <strong>✓ Key Matches</strong>
-                                    <ul>
-                                        ${fitResult.key_matches.map(match => `<li>${match}</li>`).join('')}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                            ${fitResult.key_gaps && fitResult.key_gaps.length > 0 ? `
-                                <div class="fit-gaps">
-                                    <strong>⚠ Key Gaps</strong>
-                                    <ul>
-                                        ${fitResult.key_gaps.map(gap => `<li>${gap}</li>`).join('')}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-            html += `</div>`;
-            fitContent.innerHTML = html;
-
-            // Add expand/collapse logic
-            fitContent.querySelectorAll('.fit-header').forEach(header => {
-                header.addEventListener('click', function () {
-                    const details = this.parentElement.querySelector('.fit-details');
-                    const arrow = this.querySelector('.expand-arrow');
-                    if (details.style.display === 'none' || !details.style.display) {
-                        details.style.display = 'block';
-                        arrow.style.transform = 'rotate(90deg)';
-                    } else {
-                        details.style.display = 'none';
-                        arrow.style.transform = '';
-                    }
-                });
-            });
-        } else {
-            fitContent.innerHTML = '<p style="color: #dc3545;">No candidate fit analysis available.</p>';
-        }
-    }
 
     // Helper function to determine the background position for the gradient bar
     getFitScoreBarPosition(percentage) {

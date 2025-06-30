@@ -217,6 +217,7 @@ class JobDescriptionRequest(BaseModel):
 class CandidateFitRequest(BaseModel):
     resume_data: List[Dict[str, Any]]
     job_description_data: str
+    fit_options: Optional[Dict[str, Any]] = None
 
 async def process_single_resume(resume_extractor, file_path, filename):
     """Process a single resume with rate limiting"""
@@ -456,6 +457,8 @@ async def candidate_fit(request: CandidateFitRequest):
     # Limit number of resumes per request
     if len(request.resume_data) > 100:
         raise HTTPException(status_code=400, detail="Too many resumes. Maximum 100 resumes per request.")
+    
+    fit_options = request.fit_options or {}
     
     job_id = str(uuid.uuid4())
     

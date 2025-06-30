@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Candidate Fit Analysis</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <button class="btn btn-primary" id="homeBtn" style="margin-top: 18px;">Home</button>
+        <header>
+            <h1>Candidate Fit Analysis</h1>
+            <p>See how each candidate matches the job description</p>
+        </header>
+        <div class="candidate-fit-section" id="candidateFitSection">
+            <h3 style="margin-bottom: 15px;">Candidate Fit Analysis</h3>
+            <div id="candidateFitContent"></div>
+        </div>
+        <div class="error-message" id="errorMessage" style="display: none;">
+            <div class="error-content">
+                <span class="error-icon">⚠️</span>
+                <span class="error-text"></span>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('homeBtn').onclick = function() {
+            window.location.href = 'index.html';
+        };
+    </script>
+    <script src="candidate_fit.js"></script>
+</body>
+</html>
