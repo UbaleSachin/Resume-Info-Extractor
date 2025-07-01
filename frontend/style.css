@@ -3,17 +3,25 @@
     padding: 0;
     box-sizing: border-box;
 }
+html {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
-    color: #333; /* Default text color set to dark gray */
+    background: linear-gradient(135deg, #f1f1f3 0%, #6195c5 100%);
+    background-attachment: fixed; /* This keeps the background fixed during scroll */
+    min-height: 100vh; /* Minimum viewport height */
+    height: auto; /* Allow body to grow with content */
+    color: #333;
     display: flex;
     justify-content: center;
     align-items: center;
     padding: 20px;
     flex-direction: column;
+    margin: 0;
 }
 
 header {
@@ -37,9 +45,10 @@ header p {
 
 .upload-section {
     margin-bottom: 30px;
-    max-width: 700px;
-    width: 95vw;
+    max-width: 1000px;  
+    width: 98vw;
     min-height: 500px;
+    min-width: 400px;
     margin: 30px auto;
     padding: 40px 40px;
     background: none;
@@ -62,6 +71,7 @@ header p {
     backdrop-filter: blur(15px);
     -webkit-backdrop-filter: blur(15px);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    width: 100%; 
 }
 
 .upload-area:hover {
@@ -713,8 +723,8 @@ header p {
 
 .upload-section, .files-preview {
     flex: 1 1 0;
-    min-width: 350px; /* Reduced minimum width */
-    max-width: 550px; /* Reduced maximum width */
+    min-width: 350px;
+    max-width: 1000px; /* Changed from 550px to 1000px */
     min-height: 500px;
     margin: 20px 0;
     box-sizing: border-box;
@@ -728,7 +738,7 @@ header p {
     
     .upload-section, .files-preview {
         min-width: 300px;
-        max-width: 100%;
+        max-width: 1000%;
     }
 }
 
@@ -788,7 +798,7 @@ header p {
     }
     .upload-section, .files-preview {
         min-width: 500px;
-        max-width: 700px;
+        max-width: 1000px;
     }
 }
 
@@ -897,7 +907,7 @@ input[type="email"]:focus,
 input[type="password"]:focus,
 select:focus,
 textarea:focus {
-    border-color: #667eea;
+    border-color: #e2e4ec;
     background: rgba(255,255,255,0.28);
 }
 
@@ -908,4 +918,11 @@ input[type="password"]::placeholder,
 textarea::placeholder {
     color: rgba(0,0,0,0.45);
     font-style: italic;
+}
+
+.weight-input {
+    width: 90px !important;
+    font-size: 1.1rem;
+    padding: 14px 18px;
+    text-align: center;
 }

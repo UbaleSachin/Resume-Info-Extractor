@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Get data from localStorage
     const extractedData = JSON.parse(localStorage.getItem('extractedData') || 'null');
     const jobDescriptionData = localStorage.getItem('jobDescriptionData');
+    const fitOptions = JSON.parse(localStorage.getItem('fitOptions') || '{}'); // <-- Add this line
+
 
     if (!extractedData || !jobDescriptionData) {
         showError('Missing extracted data or job description. Please go back and extract first.');
@@ -61,10 +63,22 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const bScore = typeof b.fit_percentage === 'string' ? parseFloat(b.fit_percentage) : b.fit_percentage || 0;
                 return bScore - aScore;
             });
+            const minPercent = parseFloat(fitOptions.min_fit_percent) || 0;
+
 
             let html = `<div class="fit-list fit-list-scroll">`;
             fitResults.forEach((fitResult, idx) => {
+                const percent = parseFloat(fitResult.fit_percentage) || 0;
+                if (percent < minPercent) return; // Skip if below threshold
+
                 const candidateName = fitResult.candidate_name || `Candidate ${idx + 1}`;
+                let fitPercent = fitResult.fit_percentage;
+                if (fitPercent === undefined || fitPercent === null || fitPercent === "") {
+                    fitPercent = "N/A";
+                } else {
+                    fitPercent = `${fitPercent}%`;
+                }
+                const summary = fitResult.summary || "<em>No summary provided.</em>";
                 html += `
                     <div class="fit-item" style="margin-bottom:18px;">
                         <div class="fit-header" style="display:flex;align-items:center;cursor:pointer;gap:18px;padding:12px 0;" data-fit-index="${idx}">
@@ -98,7 +112,46 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
             html += `</div>`;
             fitContent.innerHTML = html;
-
+            
+            const downloadBtn = document.getElementById('downloadFitExcelBtn');
+            if (downloadBtn) {
+                downloadBtn.onclick = async function() {
+                    if (!fitResults || fitResults.length === 0) {
+                        alert('No candidate fit data to download.');
+                        return;
+                    }
+                    // Filter by minimum fit percentage
+                    const minPercent = parseFloat(fitOptions.min_fit_percent) || 0;
+                    const filteredResults = fitResults.filter(fitResult => {
+                        const percent = parseFloat(fitResult.fit_percentage) || 0;
+                        return percent >= minPercent;
+                    });
+                    if (filteredResults.length === 0) {
+                        alert('No candidates meet the minimum fit percentage.');
+                        return;
+                    }
+                    try {
+                        // Send filteredResults to backend for Excel generation
+                        const response = await fetch('http://localhost:8000/download-fit-excel', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fit_results: filteredResults })
+                        });
+                        if (!response.ok) throw new Error('Failed to download Excel file.');
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'candidate_fit_results.xlsx';
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    } catch (err) {
+                        alert('Error downloading Excel: ' + err.message);
+                    }
+                };
+            }
             // Add expand/collapse logic
             fitContent.querySelectorAll('.fit-header').forEach(header => {
                 header.addEventListener('click', function () {

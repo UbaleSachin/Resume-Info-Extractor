@@ -21,7 +21,7 @@
                     <p>or click to browse</p>
                     <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.txt">
                     <div class="supported-formats">
-                        <span>Supported formats: PDF, DOC, DOCX, XLS, XLSX, TXT</span>
+                        <span>Supported formats: PDF, DOC, DOCX, TXT</span>
                     </div>
                     <!-- Selected Files Section moved inside upload-area -->
                     <div class="files-preview" id="filesPreview" style="display: none; margin-top: 30px;">
@@ -31,47 +31,17 @@
                         <div style="display: flex; gap: 10px;">
                             <button class="btn btn-primary" id="generateBtn">Generate</button>
                             <button class="btn btn-danger" id="removeAllBtn">Remove All</button>
-                            <button class="btn btn-success" id="candidateFitBtn">Candidate Fit</button>
+                            <button class="btn btn-success" id="CandidateFitBtn" style="display: none;">Get Candidate Fit</button>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <!-- New Job Description Drop Section -->
-            <div class="upload-section">
-                <div class="upload-area" id="jdUploadArea" style="min-height: 300px;">
-                    <div class="upload-icon">📝</div>
-                    <h3>Drop Job Description Here (.txt file)</h3>
-                    <p>or click to paste</p>
-                    <textarea id="jdInput" placeholder="Paste or drop job description here..." style="width:100%;height:120px;resize:vertical;border-radius:12px;padding:12px;margin-top:15px;font-size:1rem;"></textarea>
-                </div>
-            </div>
-        </div>
-
-        <!-- Add below the job description textarea -->
-        <div class="candidate-fit-options" style="margin-top:18px;">
-            <label>Keywords to prioritize (comma separated):</label>
-            <input type="text" id="priorityKeywords" placeholder="e.g. Python, Leadership, AWS" style="width:100%;margin-bottom:10px;">
-
-            <label>Minimum experience (years):</label>
-            <input type="number" id="minExperience" min="0" placeholder="e.g. 3" style="width:100%;margin-bottom:10px;">
-
-            <label>Educational requirements:</label>
-            <input type="text" id="eduRequirements" placeholder="e.g. Bachelors in Computer Science" style="width:100%;margin-bottom:10px;">
-
-            <label>Weightage (0-100):</label>
-            <div style="display:flex;gap:10px;">
-                <span>Skills</span><input type="number" id="weightSkills" min="0" max="100" value="40" style="width:60px;">
-                <span>Experience</span><input type="number" id="weightExperience" min="0" max="100" value="40" style="width:60px;">
-                <span>Education</span><input type="number" id="weightEducation" min="0" max="100" value="20" style="width:60px;">
-            </div>
-        </div>
-
-        <div class="loading" id="loading" style="display: none;">
-            <div class="spinner"></div>
-            <p>Processing your resumes...</p>
-        </div>
-
+            <script>
+            document.getElementById('CandidateFitBtn').onclick = function() {
+                // Optionally, check if resumes are uploaded and save to localStorage
+                window.location.href = 'job_description.html';
+            };
+            </script>
         <div class="results-section" id="resultsSection" style="display: none;">
             <h3>Extracted Data</h3>
             <div class="download-options">
@@ -86,6 +56,10 @@
                 <span class="error-text"></span>
             </div>
         </div>
+    </div>
+    <div class="loading" id="loading" style="display: none;">
+        <div class="spinner"></div>
+        <p>Processing your resumes...</p>
     </div>
 
     <script src="scripts.js"></script>

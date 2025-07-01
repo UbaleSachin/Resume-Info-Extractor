@@ -17,33 +17,13 @@ class ResumeExtractor {
         const candidateFitBtn = document.getElementById('candidateFitBtn');
 
         if (candidateFitBtn) {
-            candidateFitBtn.addEventListener('click', () => {
-                const priorityKeywords = document.getElementById('priorityKeywords').value;
-                const minExperience = document.getElementById('minExperience').value;
-                const eduRequirements = document.getElementById('eduRequirements').value;
-                const weightSkills = document.getElementById('weightSkills').value;
-                const weightExperience = document.getElementById('weightExperience').value;
-                const weightEducation = document.getElementById('weightEducation').value;
-
-                const fitOptions = {
-                    priority_keywords: priorityKeywords,
-                    min_experience: minExperience,
-                    edu_requirements: eduRequirements,
-                    weight_skills: weightSkills,
-                    weight_experience: weightExperience,
-                    weight_education: weightEducation
-                };
-
-                // Save to localStorage for use on candidate_fit.html
-                localStorage.setItem('fitOptions', JSON.stringify(fitOptions));
-                
-                // Save extracted data and job description to localStorage
-                if (this.extractedData && this.jobDescriptionData) {
+            candidateFitBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // <-- Add this line!
+                if (this.extractedData && this.extractedData.extracted_data && this.extractedData.extracted_data.length > 0) {
                     localStorage.setItem('extractedData', JSON.stringify(this.extractedData));
-                    localStorage.setItem('jobDescriptionData', this.jobDescriptionData);
-                    window.location.href = 'candidate_fit.html';
+                    window.location.href = 'job_description.html';
                 } else {
-                    this.showError('Please extract resumes and job description first.');
+                    this.showError('Please extract resumes first.');
                 }
             });
         }
@@ -172,14 +152,18 @@ class ResumeExtractor {
 
         // Click to open file dialog or focus textarea
         jdUploadArea.addEventListener('click', (e) => {
-            // If clicking on textarea, let it focus normally
-            if (e.target === jdInput) {
+            // If clicking on any input, textarea, or label inside the area, do nothing
+            if (
+                e.target.tagName === 'INPUT' ||
+                e.target.tagName === 'TEXTAREA' ||
+                e.target.tagName === 'LABEL' ||
+                e.target.closest('.candidate-fit-options')
+            ) {
                 return;
             }
-            
-            // If clicking on the upload area but not on textarea, open file dialog
-            if (jdFileInput && !jdInput.contains(e.target)) {
-                jdFileInput.value = ''; // Reset so selecting the same file twice works
+            // Otherwise, open file dialog
+            if (jdFileInput) {
+                jdFileInput.value = '';
                 jdFileInput.click();
             }
         });
@@ -495,6 +479,7 @@ class ResumeExtractor {
     displayResults(data) {
         const resultsSection = document.getElementById('resultsSection');
         const dataPreview = document.getElementById('dataPreview');
+        const candidateFitBtn = document.getElementById('CandidateFitBtn');
         
         if (!resultsSection || !dataPreview) return;
         
@@ -569,6 +554,11 @@ class ResumeExtractor {
             dataPreview.innerHTML = table;
         } else {
             dataPreview.innerHTML = '<em>No data extracted.</em>';
+        }
+
+        // Show the Get Candidate Fit button after extraction is complete
+        if (candidateFitBtn) {
+            candidateFitBtn.style.display = 'inline-block';
         }
 
         // Only fetch candidate fit if we have job description data
