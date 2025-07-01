@@ -542,10 +542,17 @@ class ResumeExtractor:
             # Clean phone number
             if "phone" in personal_info and personal_info["phone"]:
                 phone = personal_info["phone"]
-                # Extract phone using regex
-                phone_match = re.search(r'[\+]?[1-9]?[\-\s\.]?\(?[0-9]{3}\)?[\-\s\.]?[0-9]{3}[\-\s\.]?[0-9]{4}', phone)
+                # Improved regex for international phone numbers
+                phone_match = re.search(
+                    r'(\+?\d{1,3}[\s\-]?)?(\(?\d{2,4}\)?[\s\-]?)?(\d{3,4}[\s\-]?\d{3,4}[\s\-]?\d{0,4})',
+                    phone
+                )
                 if phone_match:
-                    personal_info["phone"] = phone_match.group(0)
+                    # Remove extra spaces/dashes and join groups
+                    extracted = ''.join(filter(None, phone_match.groups()))
+                    # Clean up: remove double spaces/dashes, keep only numbers, +, -, ()
+                    cleaned = re.sub(r'[^\d\+\-\(\)]', '', extracted)
+                    personal_info["phone"] = cleaned
         
         # Clean up skills - remove duplicates and empty strings
         if "skills" in data and isinstance(data["skills"], list):

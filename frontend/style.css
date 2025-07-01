@@ -926,3 +926,20 @@ textarea::placeholder {
     padding: 14px 18px;
     text-align: center;
 }
+
+#dataTable td.dt-nowrap {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+    cursor: pointer;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: #fff;
+    border: none;
+}
+.btn-secondary:hover {
+    background: #495057;
+}

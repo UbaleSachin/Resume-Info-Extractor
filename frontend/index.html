@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Resume Extractor</title>
     <link rel="stylesheet" href="style.css">
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
 </head>
 <body>
     <div class="container">
@@ -31,13 +33,13 @@
                         <div style="display: flex; gap: 10px;">
                             <button class="btn btn-primary" id="generateBtn">Generate</button>
                             <button class="btn btn-danger" id="removeAllBtn">Remove All</button>
-                            <button class="btn btn-success" id="CandidateFitBtn" style="display: none;">Get Candidate Fit</button>
+                            <button class="btn btn-success" id="candidateFitBtn" style="display: none;">Get Candidate Fit</button>
                         </div>
                     </div>
                 </div>
             </div>
             <script>
-            document.getElementById('CandidateFitBtn').onclick = function() {
+            document.getElementById('candidateFitBtn').onclick = function() {
                 // Optionally, check if resumes are uploaded and save to localStorage
                 window.location.href = 'job_description.html';
             };
@@ -63,5 +65,8 @@
     </div>
 
     <script src="scripts.js"></script>
+    <!-- jQuery and DataTables JS -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
 </body>
 </html>

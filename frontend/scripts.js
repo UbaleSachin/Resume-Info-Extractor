@@ -479,89 +479,115 @@ class ResumeExtractor {
     displayResults(data) {
         const resultsSection = document.getElementById('resultsSection');
         const dataPreview = document.getElementById('dataPreview');
-        const candidateFitBtn = document.getElementById('CandidateFitBtn');
+        const candidateFitBtn = document.getElementById('candidateFitBtn');
         
         if (!resultsSection || !dataPreview) return;
         
         resultsSection.style.display = 'block';
         resultsSection.classList.add('fade-in');
         
-        // Show a readable preview of each resume
         if (data && data.extracted_data && data.extracted_data.length > 0) {
-            // Build a table preview with correct column order
-            let table = `<div style="overflow-x: auto;">
-                <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+            // Build table header and rows
+            let tableHtml = `
+                <table id="dataTable" class="display" style="width:100%">
                     <thead>
-                        <tr style="background-color:#f5f5f5;">
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">#</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Name</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Email</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Phone</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Location</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Designation</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Skills</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Education</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Experience</th>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Location</th>
+                            <th>Designation</th>
+                            <th>Skills</th>
+                            <th>Education</th>
+                            <th>Experience</th>
                         </tr>
                     </thead>
-                    <tbody>`;
-            
+                    <tbody>
+            `;
             data.extracted_data.forEach((resume, idx) => {
                 const name = resume.personal_info?.name || '';
                 const email = resume.personal_info?.email || '';
                 const phone = resume.personal_info?.phone || '';
                 const location = resume.personal_info?.location || '';
                 const designation = resume.personal_info?.designation || '';
-                
-                const skills = Array.isArray(resume.skills) 
-                    ? resume.skills.join(', ') 
-                    : (resume.skills || '');
-                
+                const skills = Array.isArray(resume.skills) ? resume.skills.join(', ') : (resume.skills || '');
                 const education = Array.isArray(resume.education)
-                    ? resume.education.map(e => {
-                        if (typeof e === 'object') {
-                            return Object.values(e).filter(v => v).join(', ');
-                        }
-                        return e;
-                    }).join(' | ')
+                    ? resume.education.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.education || '');
-                
                 const experience = Array.isArray(resume.experience)
-                    ? resume.experience.map(e => {
-                        if (typeof e === 'object') {
-                            return Object.values(e).filter(v => v).join(', ');
-                        }
-                        return e;
-                    }).join(' | ')
+                    ? resume.experience.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.experience || '');
 
-                const description = resume.experience?.description || '';
-                
-                table += `<tr>
-                    <td style="border:1px solid #ddd;padding:8px;">${idx + 1}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${name}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${email}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${phone}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${location}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${designation}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${skills}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${education}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${experience}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${designation}</td>
-                </tr>`;
+                tableHtml += `
+                    <tr>
+                        <td>${idx + 1}</td>
+                        <td>${name}</td>
+                        <td>${email}</td>
+                        <td>${phone}</td>
+                        <td>${location}</td>
+                        <td>${designation}</td>
+                        <td>${skills}</td>
+                        <td>${education}</td>
+                        <td>${experience}</td>
+                    </tr>
+                `;
             });
-            table += '</tbody></table></div>';
-            dataPreview.innerHTML = table;
+            tableHtml += `
+                    </tbody>
+                </table>
+            `;
+            dataPreview.innerHTML = tableHtml;
+
+            // Initialize DataTable (wait for DOM update)
+            setTimeout(() => {
+                if ($('#dataTable').length) {
+                    $('#dataTable').DataTable({
+                        scrollX: true,
+                        autoWidth: false,
+                        columnDefs: [
+                            { targets: '_all', className: 'dt-nowrap' }
+                        ]
+                    });
+                }
+            }, 0);
+
         } else {
             dataPreview.innerHTML = '<em>No data extracted.</em>';
         }
 
-        // Show the Get Candidate Fit button after extraction is complete
+        // Add click event to show full cell content in a modal
+        $('#dataTable tbody').on('click', 'td', function () {
+            const cellData = $(this).text();
+            showCellModal(cellData);
+        });
+
+        function showCellModal(content) {
+            let modal = document.getElementById('cellModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'cellModal';
+                modal.style.cssText = `
+                    position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+                    background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 9999;
+                `;
+                modal.innerHTML = `
+                    <div style="background: #fff; padding: 24px 32px; border-radius: 8px; max-width: 600px; max-height: 80vh; overflow: auto; box-shadow: 0 2px 16px rgba(0,0,0,0.2);">
+                        <div id="cellModalContent" style="font-size: 1.1rem; word-break: break-word;"></div>
+                        <button id="closeCellModal" style="margin-top: 18px;" class="btn btn-primary">Close</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                modal.querySelector('#closeCellModal').onclick = () => { modal.style.display = 'none'; };
+            }
+            modal.querySelector('#cellModalContent').textContent = content;
+            modal.style.display = 'flex';
+        }
+
         if (candidateFitBtn) {
             candidateFitBtn.style.display = 'inline-block';
         }
 
-        // Only fetch candidate fit if we have job description data
         if (this.jobDescriptionData) {
             this.fetchCandidateFit();
         }
