@@ -81,7 +81,7 @@ class ResumeExtractor:
             "personal_info": {
                 "name": "Full name of the candidate",
                 "email": "Email address",
-                "phone": "Phone number",
+                "phone": "Full phone number including country code if available",
                 "location": "City, State/Country",
                 "linkedin": "LinkedIn profile URL",
                 "portfolio": "Portfolio/website URL"
@@ -137,18 +137,20 @@ class ResumeExtractor:
 
         Instructions:
         1. Extract only the information that is clearly present in the resume
-        2. For missing information, use null or empty arrays as appropriate
-        3. Normalize dates to a consistent format (MM/YYYY or YYYY)
-        4. Clean up text by removing extra whitespace and formatting
-        5. For skills, extract both technical and soft skills
-        6. For experience, focus on quantifiable achievements when possible
-        7. Ensure all JSON is properly formatted and valid
-        8. If email or phone patterns are found but look incomplete, still include them
-        9. Extract skills from throughout the document, not just skills sections
-        10. IMPORTANT: Return ONLY the JSON object, no additional text or explanations
+        2. Extract the complete phone number, including country code if provided (e.g., +1, +91)
+        3. For missing information, use empty strings
+        4. Normalize dates to a consistent format (MM/YYYY or YYYY)
+        5. Clean up text by removing extra whitespace and formatting
+        6. For skills, extract both technical and soft skills
+        7. For experience, focus on quantifiable achievements when possible
+        8. Ensure all JSON is properly formatted and valid
+        9. If email or phone patterns are found but look incomplete, still include them
+        10. Extract skills from throughout the document, not just skills sections
+        11. IMPORTANT: Return ONLY the JSON object, no additional text or explanations
 
         Resume text:
         """
+
         
         print(f"Initialized with provider: {self.current_provider}")
         print(f"Current model: {self.get_current_model()}")
@@ -540,10 +542,17 @@ class ResumeExtractor:
             # Clean phone number
             if "phone" in personal_info and personal_info["phone"]:
                 phone = personal_info["phone"]
-                # Extract phone using regex
-                phone_match = re.search(r'[\+]?[1-9]?[\-\s\.]?\(?[0-9]{3}\)?[\-\s\.]?[0-9]{3}[\-\s\.]?[0-9]{4}', phone)
+                # Improved regex for international phone numbers
+                phone_match = re.search(
+                    r'(\+?\d{1,3}[\s\-]?)?(\(?\d{2,4}\)?[\s\-]?)?(\d{3,4}[\s\-]?\d{3,4}[\s\-]?\d{0,4})',
+                    phone
+                )
                 if phone_match:
-                    personal_info["phone"] = phone_match.group(0)
+                    # Remove extra spaces/dashes and join groups
+                    extracted = ''.join(filter(None, phone_match.groups()))
+                    # Clean up: remove double spaces/dashes, keep only numbers, +, -, ()
+                    cleaned = re.sub(r'[^\d\+\-\(\)]', '', extracted)
+                    personal_info["phone"] = cleaned
         
         # Clean up skills - remove duplicates and empty strings
         if "skills" in data and isinstance(data["skills"], list):

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Candidate Fit Analysis</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <button class="btn btn-primary home-frosted-btn" id="homeBtn">Home</button>
+        <header>
+            <h1>Job Description</h1>
+            <p>Upload job description</p>
+        </header>
+    <div class="upload-section">
+        <div id="jdUploadArea">
+                <div class="jd-flex-container">
+                    <div class="jd-drop-col">
+                        <div class="upload-icon">📝</div>
+                        <h3>Drop Job Description Here (.txt file)</h3>
+                        <p>or click to paste</p>
+                        <textarea id="jdInput" placeholder="Paste or drop job description here..."></textarea>
+                    </div>
+                    <div class="candidate-fit-options jd-options-col">
+                        <label>Keywords to prioritize</label>
+                        <input type="text" id="priorityKeywords" placeholder="e.g. Python, Leadership, AWS">
+
+                        <label>Minimum experience (years)</label>
+                        <input type="number" id="minExperience" min="0" placeholder="e.g. 3">
+
+                        <label>Educational requirements</label>
+                        <input type="text" id="eduRequirements" placeholder="e.g. Bachelors in Computer Science">
+                        
+                        <label>Certification requirements</label>
+                        <input type="text" id="cfRequirements" placeholder="e.g. SuiteCloud Developer">
+
+                        <label>Weightage (0-100):</label>
+                        <div class="weightage-container">
+                            <span>Skills</span>
+                            <input type="number" id="weightSkills" min="0" max="100" value="40" class="weight-input">
+                            <span>Experience</span>
+                            <input type="number" id="weightExperience" min="0" max="100" value="40" class="weight-input">
+                            <span>Education</span>
+                            <input type="number" id="weightEducation" min="0" max="100" value="20" class="weight-input">
+                        </div>
+                        
+                        <label>Minimum Fit Percentage to Show:</label>
+                        <input type="number" id="minFitPercent" min="0" max="100" value="0">
+                        <button class="btn btn-primary frosted-btn" id="getBestFitBtn" style="margin-top:20px;">Get Best Candidate</button>
+                    </div>
+                </div>
+        </div>
+    </div>
+    <script src="job_description.js"></script>
+</body>
+</html>

@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Resume Extractor</title>
     <link rel="stylesheet" href="style.css">
+    <!-- DataTables CSS -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/jquery.dataTables.min.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Resume Extractor</h1>
+            <h1>Resume Info Extractor</h1>
             <p>Upload resumes in multiple formats and extract structured data</p>
         </header>
 
@@ -21,7 +23,7 @@
                     <p>or click to browse</p>
                     <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx,.xlsx,.xls,.txt">
                     <div class="supported-formats">
-                        <span>Supported formats: PDF, DOC, DOCX, XLS, XLSX, TXT</span>
+                        <span>Supported formats: PDF, DOC, DOCX, TXT</span>
                     </div>
                     <!-- Selected Files Section moved inside upload-area -->
                     <div class="files-preview" id="filesPreview" style="display: none; margin-top: 30px;">
@@ -29,33 +31,23 @@
                         <div class="files-list" id="filesList"></div>
                         <div id="filePreviews"></div>
                         <div style="display: flex; gap: 10px;">
-                            <button class="btn btn-primary" id="generateBtn">Generate</button>
-                            <button class="btn btn-danger" id="removeAllBtn">Remove All</button>
+                            <button class="btn btn-primary frosted-btn" id="generateBtn">Generate</button>
+                            <button class="btn btn-primary frosted-btn" id="removeAllBtn">Remove All</button>
+                            <button class="btn btn-primary frosted-btn" id="candidateFitBtn" style="display: none;">Get Candidate Fit</button>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <!-- New Job Description Drop Section -->
-            <div class="upload-section">
-                <div class="upload-area" id="jdUploadArea" style="min-height: 300px;">
-                    <div class="upload-icon">📝</div>
-                    <h3>Drop Job Description Here</h3>
-                    <p>or click to paste</p>
-                    <textarea id="jdInput" placeholder="Paste or drop job description here..." style="width:100%;height:120px;resize:vertical;border-radius:12px;padding:12px;margin-top:15px;font-size:1rem;"></textarea>
-                </div>
-            </div>
-        </div>
-
-        <div class="loading" id="loading" style="display: none;">
-            <div class="spinner"></div>
-            <p>Processing your resumes...</p>
-        </div>
-
+            <script>
+            document.getElementById('candidateFitBtn').onclick = function() {
+                // Optionally, check if resumes are uploaded and save to localStorage
+                window.location.href = 'job_description.html';
+            };
+            </script>
         <div class="results-section" id="resultsSection" style="display: none;">
             <h3>Extracted Data</h3>
             <div class="download-options">
-                <button class="btn btn-success" id="downloadBtn">Download Excel</button>
+                <button class="btn btn-primary frosted-btn" id="downloadBtn">Download Excel</button>
             </div>
             <div class="data-preview" id="dataPreview"></div>
         </div>
@@ -67,7 +59,14 @@
             </div>
         </div>
     </div>
+    <div class="loading" id="loading" style="display: none;">
+        <div class="spinner"></div>
+        <p>Processing your resumes...</p>
+    </div>
 
     <script src="scripts.js"></script>
+    <!-- jQuery and DataTables JS -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
 </body>
 </html>

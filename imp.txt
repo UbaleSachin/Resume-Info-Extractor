@@ -1,4 +1,4 @@
-remove Filename, add LOCATION, DESIGNATION
+"""remove Filename, add LOCATION, DESIGNATION
 fix the window opening two time after adding resume.
 add remove all option in web site to remeove resume.
 
@@ -19,3 +19,124 @@ in experience keep only DESIGNATION, company name, time.
 'gemini-2.0-flash-lite':'request' = '30 RPM', '1500 req/day', 'API pricing per 1M tokens, UI remains free of charge' = 'input': '0.0075$', 'output': '0.30$'
 'gemini-2.0-flash':'request' = '15 RPM', '1500 req/day', 'API pricing per 1M tokens, UI remains free of charge' = 'input': '0.10$', 'output': '0.40$'
 'gemini-2.5-flash-preview-04-17':'request' = '10 RPM', '500 req/day', 'API pricing per 1M tokens, UI remains free of charge' = 'input': '0.15$', 'output': '0.60$'
+
+
+
+// Add at the top, after DOMContentLoaded
+let compareMode = false;
+let selectedCandidates = [];
+
+// Add after rendering fitResults (after fitContent.innerHTML = html;)
+const compareBtn = document.getElementById('compareCandidatesBtn');
+if (compareBtn) {
+    compareBtn.onclick = function() {
+        compareMode = !compareMode;
+        selectedCandidates = [];
+        // Show/hide checkboxes
+        fitContent.querySelectorAll('.fit-checkbox').forEach(cb => {
+            cb.style.display = compareMode ? 'inline-block' : 'none';
+            cb.checked = false;
+        });
+        // Show compare panel if in compare mode
+        showComparePanel(compareMode);
+    };
+}
+
+// Modify your fitResults rendering to include checkboxes:
+let html = `<div class="fit-list fit-list-scroll">`;
+fitResults.forEach((fitResult, idx) => {
+    // ...existing code...
+    html += `
+        <div class="fit-item" style="margin-bottom:18px;">
+            <div class="fit-header" style="display:flex;align-items:center;cursor:pointer;gap:18px;padding:12px 0;" data-fit-index="${idx}">
+                <input type="checkbox" class="fit-checkbox" data-fit-index="${idx}" style="display:none;margin-right:10px;">
+                <span style="font-weight:700;font-size:1.1rem;">${candidateName}</span>
+                <span class="fit-score-badge" style="margin-left:auto;background:#e9ecef;padding:6px 16px;border-radius:16px;font-weight:600;color:#333;">
+                    ${fitResult.fit_percentage}%
+                </span>
+                <span class="expand-arrow" style="margin-left:10px;transition:transform 0.2s;">&#9654;</span>
+            </div>
+            <div class="fit-details" style="display:none;padding:12px 0 0 0;">
+                <!-- ...existing details... -->
+            </div>
+        </div>
+    `;
+});
+html += `</div>`;
+fitContent.innerHTML = html;
+
+// Checkbox logic
+fitContent.querySelectorAll('.fit-checkbox').forEach(cb => {
+    cb.addEventListener('change', function() {
+        const idx = parseInt(this.getAttribute('data-fit-index'));
+        if (this.checked) {
+            if (selectedCandidates.length >= 2) {
+                this.checked = false;
+                alert('You can only compare two candidates at a time.');
+                return;
+            }
+            selectedCandidates.push(idx);
+        } else {
+            selectedCandidates = selectedCandidates.filter(i => i !== idx);
+        }
+        // Show comparison if two selected
+        if (selectedCandidates.length === 2) {
+            showCandidateComparison(selectedCandidates.map(i => fitResults[i]));
+        } else {
+            hideCandidateComparison();
+        }
+    });
+});
+
+// Show/hide checkboxes based on compareMode
+function showComparePanel(show) {
+    fitContent.querySelectorAll('.fit-checkbox').forEach(cb => {
+        cb.style.display = show ? 'inline-block' : 'none';
+        cb.checked = false;
+    });
+    hideCandidateComparison();
+}
+
+// Comparison modal/section
+function showCandidateComparison([cand1, cand2]) {
+    let modal = document.getElementById('compareModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'compareModal';
+        modal.style.cssText = `
+            position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 9999;
+        `;
+        modal.innerHTML = `
+            <div style="background: #fff; padding: 24px 32px; border-radius: 8px; max-width: 900px; max-height: 90vh; overflow: auto; box-shadow: 0 2px 16px rgba(0,0,0,0.2);">
+                <h2 style="margin-bottom:18px;">Candidate Comparison</h2>
+                <div id="compareModalContent" style="display:flex;gap:32px;"></div>
+                <button id="closeCompareModal" style="margin-top: 18px;" class="btn btn-primary">Close</button>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        modal.querySelector('#closeCompareModal').onclick = () => { modal.style.display = 'none'; };
+    }
+    const content = modal.querySelector('#compareModalContent');
+    content.innerHTML = `
+        <div style="flex:1;">
+            <h3>${cand1.candidate_name || 'Candidate 1'}</h3>
+            <p><strong>Fit %:</strong> ${cand1.fit_percentage}%</p>
+            <p><strong>Summary:</strong> ${cand1.summary}</p>
+            <p><strong>Key Matches:</strong><br>${cand1.key_matches?.map(m => `<li>${m}</li>`).join('') || '-'}</p>
+            <p><strong>Key Gaps:</strong><br>${cand1.key_gaps?.map(g => `<li>${g}</li>`).join('') || '-'}</p>
+        </div>
+        <div style="flex:1;">
+            <h3>${cand2.candidate_name || 'Candidate 2'}</h3>
+            <p><strong>Fit %:</strong> ${cand2.fit_percentage}%</p>
+            <p><strong>Summary:</strong> ${cand2.summary}</p>
+            <p><strong>Key Matches:</strong><br>${cand2.key_matches?.map(m => `<li>${m}</li>`).join('') || '-'}</p>
+            <p><strong>Key Gaps:</strong><br>${cand2.key_gaps?.map(g => `<li>${g}</li>`).join('') || '-'}</p>
+        </div>
+    `;
+    modal.style.display = 'flex';
+}
+function hideCandidateComparison() {
+    const modal = document.getElementById('compareModal');
+    if (modal) modal.style.display = 'none';
+}"""

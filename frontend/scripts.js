@@ -14,6 +14,19 @@ class ResumeExtractor {
         const downloadBtn = document.getElementById('downloadBtn');
         const removeAllBtn = document.getElementById('removeAllBtn');
         const generateBtn = document.getElementById('generateBtn');
+        const candidateFitBtn = document.getElementById('candidateFitBtn');
+
+        if (candidateFitBtn) {
+            candidateFitBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // <-- Add this line!
+                if (this.extractedData && this.extractedData.extracted_data && this.extractedData.extracted_data.length > 0) {
+                    localStorage.setItem('extractedData', JSON.stringify(this.extractedData));
+                    window.location.href = 'job_description.html';
+                } else {
+                    this.showError('Please extract resumes first.');
+                }
+            });
+        }
 
         if (generateBtn) {
             generateBtn.addEventListener('click', async (e) => {
@@ -139,14 +152,18 @@ class ResumeExtractor {
 
         // Click to open file dialog or focus textarea
         jdUploadArea.addEventListener('click', (e) => {
-            // If clicking on textarea, let it focus normally
-            if (e.target === jdInput) {
+            // If clicking on any input, textarea, or label inside the area, do nothing
+            if (
+                e.target.tagName === 'INPUT' ||
+                e.target.tagName === 'TEXTAREA' ||
+                e.target.tagName === 'LABEL' ||
+                e.target.closest('.candidate-fit-options')
+            ) {
                 return;
             }
-            
-            // If clicking on the upload area but not on textarea, open file dialog
-            if (jdFileInput && !jdInput.contains(e.target)) {
-                jdFileInput.value = ''; // Reset so selecting the same file twice works
+            // Otherwise, open file dialog
+            if (jdFileInput) {
+                jdFileInput.value = '';
                 jdFileInput.click();
             }
         });
@@ -390,7 +407,7 @@ class ResumeExtractor {
                 formData.append('files', file);
             });
             
-            const response = await fetch('http://localhost:8000/extract-resume', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/extract-resume', {
                 method: 'POST',
                 body: formData
             });
@@ -404,7 +421,7 @@ class ResumeExtractor {
             let extractedData = null;
             while (true) {
                 await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
-                const pollResp = await fetch(`http://localhost:8000/extract-resume-/${jobId}`);
+                const pollResp = await fetch(`https://resume-info-extractor.up.railway.app/extract-resume-/${jobId}`);
                 const pollData = await pollResp.json();
                 if (pollData.status === 'completed') {
                     extractedData = pollData;
@@ -423,157 +440,6 @@ class ResumeExtractor {
         }
     }
 
-    async extractJobDescription() {
-        const jdInput = document.getElementById('jdInput');
-        if (!jdInput || !jdInput.value.trim()) {
-            this.showError('Please enter or drop a job description.');
-            return;
-        }
-
-        this.showLoading();
-        this.hideError();
-
-        try {
-            const jobDescriptionText = jdInput.value.trim();
-            // Optionally, you can still call your backend for JD extraction if needed
-            // But for candidate fit, store the string
-            this.jobDescriptionData = jobDescriptionText;
-
-            // If you want to call /extract-job-description, do it here, but don't overwrite jobDescriptionData with the response object
-
-            // this.showSuccess('Job description processed successfully!');
-        } catch (error) {
-            console.error('Error extracting job description:', error);
-            this.showError('Failed to extract job description. Please try again.');
-        } finally {
-            this.hideLoading();
-        }
-    }
-
-    async fetchCandidateFit() {
-        if (!this.extractedData || !this.jobDescriptionData) {
-            this.showError('Please extract both resume data and job description first.');
-            return;
-        }
-        this.hideError();
-
-        try {
-            // Send all resumes for evaluation
-            const resumes = this.extractedData.extracted_data || [];
-            const response = await fetch('http://localhost:8000/candidate-fit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    resume_data: resumes,
-                    job_description_data: this.jobDescriptionData
-                })
-            });
-            const data = await response.json();
-            if (!data.success || !data.job_id) {
-                throw new Error('Failed to start candidate fit job.');
-            }
-            const jobId = data.job_id;
-
-            // Poll for candidate fit status
-            let fitData = null;
-            while (true) {
-                await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
-                const pollResp = await fetch(`http://localhost:8000/candidate-fit/${jobId}`);
-                const pollData = await pollResp.json();
-                if (pollData.status === 'completed') {
-                    fitData = pollData;
-                    break;
-                }
-                // Optionally, show progress to user here
-            }
-            this.displayCandidateFit(fitData);
-        } catch (error) {
-            this.showError(`Failed to fetch candidate fit summary: ${error.message}`);
-        }
-    }
-
-    displayCandidateFit(data) {
-        let candidateFitSection = document.getElementById('candidateFitSection');
-        if (!candidateFitSection) {
-            const resultsSection = document.getElementById('resultsSection');
-            candidateFitSection = document.createElement('div');
-            candidateFitSection.id = 'candidateFitSection';
-            candidateFitSection.className = 'candidate-fit-section';
-            candidateFitSection.style.marginBottom = '30px';
-            candidateFitSection.innerHTML = `
-                <h3 style="margin-bottom: 15px;">Candidate Fit Analysis</h3>
-                <div id="candidateFitContent"></div>
-            `;
-            const downloadOptions = document.querySelector('.download-options');
-            if (resultsSection && downloadOptions) {
-                resultsSection.insertBefore(candidateFitSection, downloadOptions);
-            } else if (resultsSection) {
-                resultsSection.prepend(candidateFitSection);
-            }
-        }
-
-        const fitContent = document.getElementById('candidateFitContent');
-        if (!fitContent) return;
-
-        // Support multiple results
-        const fitResults = data && (data.fit_results || (data.fit_result && [data.fit_result]));
-        if (fitResults && fitResults.length > 0) {
-            let html = `<div class="fit-list${fitResults.length > 10 ? ' fit-list-scroll' : ''}">`;
-            fitResults.forEach((fitResult, idx) => {
-                const candidateName = fitResult.candidate_name || `Candidate ${idx + 1}`;
-                html += `
-                    <div class="fit-item" style="margin-bottom:18px;">
-                        <div class="fit-header" style="display:flex;align-items:center;cursor:pointer;gap:18px;padding:12px 0;" data-fit-index="${idx}">
-                            <span style="font-weight:700;font-size:1.1rem;">${candidateName}</span>
-                            <span class="fit-score-badge" style="margin-left:auto;background:#e9ecef;padding:6px 16px;border-radius:16px;font-weight:600;color:#333;">
-                                ${fitResult.fit_percentage}%
-                            </span>
-                            <span class="expand-arrow" style="margin-left:10px;transition:transform 0.2s;">&#9654;</span>
-                        </div>
-                        <div class="fit-details" style="display:none;padding:12px 0 0 0;">
-                            <div class="fit-summary" style="margin-bottom:12px;">${fitResult.summary || ''}</div>
-                            ${fitResult.key_matches && fitResult.key_matches.length > 0 ? `
-                                <div class="fit-matches" style="margin-bottom:10px;">
-                                    <strong>✓ Key Matches</strong>
-                                    <ul>
-                                        ${fitResult.key_matches.map(match => `<li>${match}</li>`).join('')}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                            ${fitResult.key_gaps && fitResult.key_gaps.length > 0 ? `
-                                <div class="fit-gaps">
-                                    <strong>⚠ Key Gaps</strong>
-                                    <ul>
-                                        ${fitResult.key_gaps.map(gap => `<li>${gap}</li>`).join('')}
-                                    </ul>
-                                </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-            html += `</div>`;
-            fitContent.innerHTML = html;
-
-            // Add expand/collapse logic
-            fitContent.querySelectorAll('.fit-header').forEach(header => {
-                header.addEventListener('click', function () {
-                    const details = this.parentElement.querySelector('.fit-details');
-                    const arrow = this.querySelector('.expand-arrow');
-                    if (details.style.display === 'none' || !details.style.display) {
-                        details.style.display = 'block';
-                        arrow.style.transform = 'rotate(90deg)';
-                    } else {
-                        details.style.display = 'none';
-                        arrow.style.transform = '';
-                    }
-                });
-            });
-        } else {
-            fitContent.innerHTML = '<p style="color: #dc3545;">No candidate fit analysis available.</p>';
-        }
-    }
-
     // Helper function to determine the background position for the gradient bar
     getFitScoreBarPosition(percentage) {
         if (percentage <= 25) return 0;
@@ -585,83 +451,115 @@ class ResumeExtractor {
     displayResults(data) {
         const resultsSection = document.getElementById('resultsSection');
         const dataPreview = document.getElementById('dataPreview');
+        const candidateFitBtn = document.getElementById('candidateFitBtn');
         
         if (!resultsSection || !dataPreview) return;
         
         resultsSection.style.display = 'block';
         resultsSection.classList.add('fade-in');
         
-        // Show a readable preview of each resume
         if (data && data.extracted_data && data.extracted_data.length > 0) {
-            // Build a table preview with correct column order
-            let table = `<div style="overflow-x: auto;">
-                <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+            // Build table header and rows
+            let tableHtml = `
+                <table id="dataTable" class="display" style="width:100%">
                     <thead>
-                        <tr style="background-color:#f5f5f5;">
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">#</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Name</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Email</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Phone</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Location</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Designation</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Skills</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Education</th>
-                            <th style="border:1px solid #ddd;padding:8px;text-align:left;">Experience</th>
+                        <tr>
+                            <th>#</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Location</th>
+                            <th>Designation</th>
+                            <th>Skills</th>
+                            <th>Education</th>
+                            <th>Experience</th>
                         </tr>
                     </thead>
-                    <tbody>`;
-            
+                    <tbody>
+            `;
             data.extracted_data.forEach((resume, idx) => {
                 const name = resume.personal_info?.name || '';
                 const email = resume.personal_info?.email || '';
                 const phone = resume.personal_info?.phone || '';
                 const location = resume.personal_info?.location || '';
                 const designation = resume.personal_info?.designation || '';
-                
-                const skills = Array.isArray(resume.skills) 
-                    ? resume.skills.join(', ') 
-                    : (resume.skills || '');
-                
+                const skills = Array.isArray(resume.skills) ? resume.skills.join(', ') : (resume.skills || '');
                 const education = Array.isArray(resume.education)
-                    ? resume.education.map(e => {
-                        if (typeof e === 'object') {
-                            return Object.values(e).filter(v => v).join(', ');
-                        }
-                        return e;
-                    }).join(' | ')
+                    ? resume.education.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.education || '');
-                
                 const experience = Array.isArray(resume.experience)
-                    ? resume.experience.map(e => {
-                        if (typeof e === 'object') {
-                            return Object.values(e).filter(v => v).join(', ');
-                        }
-                        return e;
-                    }).join(' | ')
+                    ? resume.experience.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.experience || '');
 
-                const description = resume.experience?.description || '';
-                
-                table += `<tr>
-                    <td style="border:1px solid #ddd;padding:8px;">${idx + 1}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${name}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${email}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${phone}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${location}</td>
-                    <td style="border:1px solid #ddd;padding:8px;">${designation}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${skills}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${education}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${experience}</td>
-                    <td style="border:1px solid #ddd;padding:8px;max-width:200px;word-wrap:break-word;">${designation}</td>
-                </tr>`;
+                tableHtml += `
+                    <tr>
+                        <td>${idx + 1}</td>
+                        <td>${name}</td>
+                        <td>${email}</td>
+                        <td>${phone}</td>
+                        <td>${location}</td>
+                        <td>${designation}</td>
+                        <td>${skills}</td>
+                        <td>${education}</td>
+                        <td>${experience}</td>
+                    </tr>
+                `;
             });
-            table += '</tbody></table></div>';
-            dataPreview.innerHTML = table;
+            tableHtml += `
+                    </tbody>
+                </table>
+            `;
+            dataPreview.innerHTML = tableHtml;
+
+            // Initialize DataTable (wait for DOM update)
+            setTimeout(() => {
+                if ($('#dataTable').length) {
+                    $('#dataTable').DataTable({
+                        scrollX: true,
+                        autoWidth: false,
+                        columnDefs: [
+                            { targets: '_all', className: 'dt-nowrap' }
+                        ]
+                    });
+                }
+            }, 0);
+
         } else {
             dataPreview.innerHTML = '<em>No data extracted.</em>';
         }
 
-        // Only fetch candidate fit if we have job description data
+        // Add click event to show full cell content in a modal
+        $('#dataTable tbody').on('click', 'td', function () {
+            const cellData = $(this).text();
+            showCellModal(cellData);
+        });
+
+        function showCellModal(content) {
+            let modal = document.getElementById('cellModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'cellModal';
+                modal.style.cssText = `
+                    position: fixed; left: 0; top: 0; width: 100vw; height: 100vh;
+                    background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 9999;
+                `;
+                modal.innerHTML = `
+                    <div style="background: #fff; padding: 24px 32px; border-radius: 8px; max-width: 600px; max-height: 80vh; overflow: auto; box-shadow: 0 2px 16px rgba(0,0,0,0.2);">
+                        <div id="cellModalContent" style="font-size: 1.1rem; word-break: break-word;"></div>
+                        <button id="closeCellModal" style="margin-top: 18px;" class="btn btn-primary">Close</button>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+                modal.querySelector('#closeCellModal').onclick = () => { modal.style.display = 'none'; };
+            }
+            modal.querySelector('#cellModalContent').textContent = content;
+            modal.style.display = 'flex';
+        }
+
+        if (candidateFitBtn) {
+            candidateFitBtn.style.display = 'inline-block';
+        }
+
         if (this.jobDescriptionData) {
             this.fetchCandidateFit();
         }
@@ -676,7 +574,7 @@ class ResumeExtractor {
         const format = 'xlsx';
         
         try {
-            const response = await fetch('http://localhost:8000/download-data', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/download-data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

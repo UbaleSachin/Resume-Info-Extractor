@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Candidate Fit Analysis</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <button class="btn btn-primary home-frosted-btn" id="homeBtn">Home</button>
+    <div class="container">
+        <header>
+            <h1>Candidate Fit Analysis</h1>
+            <p>See how each candidate matches the job description</p>
+        </header>
+        <div class="candidate-fit-section" id="candidateFitSection">
+            <h3 style="margin-bottom: 15px;">Best Candidates</h3>
+            <div id="candidateFitContent"></div>
+        </div>
+        <div class="action-buttons" style="display: flex; gap: 18px; margin-bottom: 18px;">
+            <button class="btn btn-primary frosted-btn" id="downloadBtn">Download Excel</button>
+            <button class="btn btn-primary frosted-btn" id="compareCandidatesBtn">Compare Candidates</button>
+        </div>
+        <div class="error-message" id="errorMessage" style="display: none;">
+            <div class="error-content">
+                <span class="error-icon">⚠️</span>
+                <span class="error-text"></span>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('homeBtn').onclick = function() {
+            window.location.href = 'index.html';
+        };
+    </script>
+    <script src="candidate_fit.js"></script>
+</body>
+</html>

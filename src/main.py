@@ -2,10 +2,11 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 import csv
 import pandas as pd
+import io
 from io import BytesIO, StringIO
 import tempfile
 import os
@@ -182,10 +183,10 @@ class ProcessingQueue:
         except Exception as e:
             job_storage.update_job(job_id, 'failed', {'error': str(e)})
     
-    async def _process_candidate_fit_job(self, job_id, resumes, job_description, evaluator):
+    async def _process_candidate_fit_job(self, job_id, resumes, job_description, evaluator, fit_options=None):
         """Process a candidate fit evaluation job"""
         try:
-            await process_candidate_fit_job_async(job_id, resumes, job_description, evaluator)
+            await process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options)
         except Exception as e:
             job_storage.update_job(job_id, 'failed', {'error': str(e)})
     
@@ -217,6 +218,7 @@ class JobDescriptionRequest(BaseModel):
 class CandidateFitRequest(BaseModel):
     resume_data: List[Dict[str, Any]]
     job_description_data: str
+    fit_options: Optional[Dict[str, Any]] = None
 
 async def process_single_resume(resume_extractor, file_path, filename):
     """Process a single resume with rate limiting"""
@@ -283,7 +285,7 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
 
-async def process_single_candidate_fit(evaluator, resume, job_description):
+async def process_single_candidate_fit(evaluator, resume, job_description, fit_options=None):
     """Process a single candidate fit evaluation with rate limiting"""
     await rate_limiter.acquire()
     try:
@@ -293,7 +295,8 @@ async def process_single_candidate_fit(evaluator, resume, job_description):
             executor, 
             evaluator.evaluate_fit, 
             resume, 
-            job_description
+            job_description,
+            fit_options
         )
         if result:
             result['candidate_name'] = resume.get('personal_info', {}).get('name', 'Unknown')
@@ -302,7 +305,7 @@ async def process_single_candidate_fit(evaluator, resume, job_description):
         candidate_name = resume.get('personal_info', {}).get('name', 'Unknown')
         return {"candidate_name": candidate_name, "error": str(e), "success": False}
 
-async def process_candidate_fit_job_async(job_id, resumes, job_description, evaluator):
+async def process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options=None):
     """Process candidate fit job with progress tracking"""
     results = []
     total_resumes = len(resumes)
@@ -315,7 +318,7 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     
     async def process_with_semaphore(resume, index):
         async with semaphore:
-            result = await process_single_candidate_fit(evaluator, resume, job_description)
+            result = await process_single_candidate_fit(evaluator, resume, job_description, fit_options)
             
             # Update progress
             progress = int((index + 1) * 100 / total_resumes)
@@ -457,6 +460,9 @@ async def candidate_fit(request: CandidateFitRequest):
     if len(request.resume_data) > 100:
         raise HTTPException(status_code=400, detail="Too many resumes. Maximum 100 resumes per request.")
     
+    fit_options = request.fit_options or {}
+    print(f"Candidate fit options: {fit_options}")
+    
     job_id = str(uuid.uuid4())
     
     try:
@@ -468,8 +474,9 @@ async def candidate_fit(request: CandidateFitRequest):
             'candidate_fit', 
             job_id, 
             request.resume_data, 
-            request.job_description_data, 
-            candidate_fit_evaluator
+            request.job_description_data,
+            candidate_fit_evaluator,
+            fit_options
         )
         
         if not queued:
@@ -527,6 +534,33 @@ async def download_data(request: DownloadRequest):
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating download: {str(e)}")
+    
+@app.post("/download-fit-excel")
+async def download_fit_excel(data: dict):
+    fit_results = data.get("fit_results", [])
+    if not fit_results:
+        raise HTTPException(status_code=400, detail="No fit results provided.")
+
+    # Flatten and prepare data for DataFrame
+    rows = []
+    for idx, fit in enumerate(fit_results, 1):
+        rows.append({
+            "Rank": idx,
+            "Candidate Name": fit.get("candidate_name", f"Candidate {idx}"),
+            "Fit Percentage": fit.get("fit_percentage", ""),
+            "Summary": fit.get("summary", ""),
+            "Key Matches": ", ".join(fit.get("key_matches", [])),
+            "Key Gaps": ", ".join(fit.get("key_gaps", [])),
+        })
+    df = pd.DataFrame(rows)
+    output = io.BytesIO()
+    df.to_excel(output, index=False)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
+    )
 
 @app.get("/system/health")
 async def health_check():
