@@ -11,7 +11,7 @@ html {
 
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #f1f1f3 0%, #6195c5 100%);
+    background: linear-gradient(135deg, #f1f1f3 0%, #56d6d6 100%);
     background-attachment: fixed; /* This keeps the background fixed during scroll */
     min-height: 100vh; /* Minimum viewport height */
     height: auto; /* Allow body to grow with content */
@@ -45,7 +45,7 @@ header p {
 
 .upload-section {
     margin-bottom: 30px;
-    max-width: 1000px;  
+    max-width: 2000px;  
     width: 98vw;
     min-height: 500px;
     min-width: 400px;
@@ -120,7 +120,7 @@ header p {
     background: rgba(255, 255, 255, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.4);
     border-radius: 25px;
-    padding: 50px 30px;
+    padding: 70px 40px;
     font-size: 1.2rem;
     text-align: center;
     cursor: pointer;
@@ -131,7 +131,7 @@ header p {
     -webkit-backdrop-filter: blur(15px);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
     margin-bottom: 30px;
-    min-height: 500px; /* Same height as resume upload area */
+    min-height: 600px; /* Same height as resume upload area */
 }
 
 #jdUploadArea:hover {
@@ -156,13 +156,13 @@ header p {
 
 #jdInput {
     width: 100%;
-    min-height: 300px;
+    min-height: 500px;
     padding: 20px;
     border: 2px solid rgba(255, 255, 255, 0.4);
     border-radius: 15px;
     background: rgba(255, 255, 255, 0.15);
     color: #333;
-    font-size: 1rem;
+    font-size: 1.15rem;
     line-height: 1.6;
     resize: vertical;
     backdrop-filter: blur(10px);
@@ -724,7 +724,7 @@ header p {
 .upload-section, .files-preview {
     flex: 1 1 0;
     min-width: 350px;
-    max-width: 1000px; /* Changed from 550px to 1000px */
+    max-width: 2000px; /* Changed from 550px to 1000px */
     min-height: 500px;
     margin: 20px 0;
     box-sizing: border-box;
@@ -821,7 +821,7 @@ header p {
 }
 
 .data-preview th {
-    background: linear-gradient(45deg, #667eea, #764ba2);
+    background: linear-gradient(45deg, #56d6d6 0%, #56d6d6);
     color: #fff;
     font-weight: 700;
     letter-spacing: 1px;
@@ -921,10 +921,13 @@ textarea::placeholder {
 }
 
 .weight-input {
-    width: 90px !important;
+    width: 80px;
+    min-width: 60px;
+    max-width: 100px;
     font-size: 1.1rem;
-    padding: 14px 18px;
+    padding: 10px 8px;
     text-align: center;
+    box-sizing: border-box;
 }
 
 #dataTable td.dt-nowrap {
@@ -942,4 +945,178 @@ textarea::placeholder {
 }
 .btn-secondary:hover {
     background: #495057;
+}
+
+/* Enhanced label styling */
+.candidate-fit-options label {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: #2c3e50;
+    display: block;
+    margin-bottom: 8px;
+    margin-top: 15px;
+    margin-right: 0;
+}
+
+.candidate-fit-options label:first-child {
+    margin-top: 0;
+}
+
+/* Weightage section labels */
+.weightage-container {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin-top: 10px;
+    overflow: hidden;
+    flex-wrap: wrap;
+}
+
+.weightage-container span {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 15px;
+    font-weight: 500;
+    color: #34495e;
+    white-space: nowrap;
+}
+
+/* Input field enhancements */
+.candidate-fit-options input[type="text"],
+.candidate-fit-options input[type="number"],
+.candidate-fit-options textarea {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    padding: 10px 12px;
+    border: 2px solid #e1e8ed;
+    border-radius: 8px;
+    transition: border-color 0.3s ease;
+}
+
+.candidate-fit-options input[type="text"]:focus,
+.candidate-fit-options input[type="number"]:focus,
+.candidate-fit-options textarea:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+/* Main textarea styling */
+#jdInput {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+    font-size: 14px !important;
+}
+
+.jd-flex-container {
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+    justify-content: center;
+    width: 100%;
+}
+
+.jd-drop-col {
+    flex: 1 1 0;
+    min-width: 340px;
+    max-width: 2000px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.jd-drop-col textarea {
+    width: 100%;
+    min-height: 300px;
+    padding: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 15px;
+    background: rgba(255, 255, 255, 0.15);
+    color: #333;
+    font-size: 1rem;
+    line-height: 1.6;
+    resize: vertical;
+    margin-top: 20px;
+}
+
+.jd-options-col {
+    flex: 1 1 0;
+    min-width: 320px;
+    max-width: 2000px;
+    background: none;
+    border-radius: 18px;
+    padding: 28px 24px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+@media (max-width: 900px) {
+    .jd-flex-container {
+        flex-direction: column;
+        gap: 24px;
+    }
+    .jd-options-col, .jd-drop-col {
+        max-width: 500%;
+        min-width: 0;
+    }
+}
+
+.jd-unified-container {
+    background: rgba(255,255,255,0.22);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    border-radius: 22px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    padding: 36px 32px;
+    margin: 0 auto 30px auto;
+    max-width: 2000px;
+    width: 100%;
+}
+
+/* Frosted glass button style with color tints */
+.frosted-btn {
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #333;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.13);
+    border-radius: 18px;
+    padding: 12px 32px;
+    font-size: 1.08rem;
+    font-weight: 600;
+    transition: background 0.2s, box-shadow 0.2s, color 0.2s;
+    outline: none;
+    cursor: pointer;
+}
+
+#generateBtn {
+    background: linear-gradient(135deg, rgba(102,126,234,0.22), rgba(118,75,162,0.22)); /* Blue/Purple */
+}
+
+#removeAllBtn {
+    background: linear-gradient(135deg, rgba(255,71,87,0.22), rgba(255,107,129,0.22)); /* Red */
+}
+
+#candidateFitBtn {
+    background: linear-gradient(135deg, rgba(86,171,47,0.22), rgba(120,200,100,0.22)); /* Light Green */
+}
+
+#downloadBtn {
+    background: linear-gradient(135deg, rgba(0,176,155,0.22), rgba(150,201,61,0.22)); /* Teal/Green */
+}
+
+#getBestFitBtn {
+    background: linear-gradient(135deg, rgba(255,195,113,0.22), rgba(255,175,189,0.22)); /* Peach */
+}
+
+#compareCandidatesBtn {
+    background: linear-gradient(135deg, rgba(108,117,125,0.22), rgba(73,80,87,0.22)); /* Gray */
+}
+
+/* On hover, increase opacity and brightness */
+.frosted-btn:hover, .frosted-btn:focus {
+    filter: brightness(1.08);
+    background: rgba(255,255,255,0.32);
+    color: #222;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.18);
 }

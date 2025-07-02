@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const weightExperience = document.getElementById('weightExperience')?.value || '40';
                 const weightEducation = document.getElementById('weightEducation')?.value || '20';
                 const minFitPercent = document.getElementById('minFitPercent')?.value || '0';
+                const cfRequirements = document.getElementById('cfRequirements')?.value || '';
 
                 console.log('Form data collected:', {
                     jdInput: jdInput.length + ' characters',
@@ -50,7 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     weightSkills,
                     weightExperience,
                     weightEducation,
-                    minFitPercent
+                    minFitPercent,
+                    cfRequirements
                 });
 
                 // Validate required fields
@@ -76,7 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     weight_skills: weightSkills,
                     weight_experience: weightExperience,
                     weight_education: weightEducation,
-                    min_fit_percent: minFitPercent
+                    min_fit_percent: minFitPercent,
+                    cf_requirements: cfRequirements
                 };
                 
                 localStorage.setItem('fitOptions', JSON.stringify(fitOptions));

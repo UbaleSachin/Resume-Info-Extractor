@@ -407,7 +407,7 @@ class ResumeExtractor {
                 formData.append('files', file);
             });
             
-            const response = await fetch('http://localhost:8000/extract-resume', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/extract-resume', {
                 method: 'POST',
                 body: formData
             });
@@ -421,7 +421,7 @@ class ResumeExtractor {
             let extractedData = null;
             while (true) {
                 await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
-                const pollResp = await fetch(`http://localhost:8000/extract-resume-/${jobId}`);
+                const pollResp = await fetch(`https://resume-info-extractor.up.railway.app/extract-resume-/${jobId}`);
                 const pollData = await pollResp.json();
                 if (pollData.status === 'completed') {
                     extractedData = pollData;
@@ -439,34 +439,6 @@ class ResumeExtractor {
             this.hideLoading();
         }
     }
-
-    async extractJobDescription() {
-        const jdInput = document.getElementById('jdInput');
-        if (!jdInput || !jdInput.value.trim()) {
-            this.showError('Please enter or drop a job description.');
-            return;
-        }
-
-        this.showLoading();
-        this.hideError();
-
-        try {
-            const jobDescriptionText = jdInput.value.trim();
-            // Optionally, you can still call your backend for JD extraction if needed
-            // But for candidate fit, store the string
-            this.jobDescriptionData = jobDescriptionText;
-
-            // If you want to call /extract-job-description, do it here, but don't overwrite jobDescriptionData with the response object
-
-            // this.showSuccess('Job description processed successfully!');
-        } catch (error) {
-            console.error('Error extracting job description:', error);
-            this.showError('Failed to extract job description. Please try again.');
-        } finally {
-            this.hideLoading();
-        }
-    }
-
 
     // Helper function to determine the background position for the gradient bar
     getFitScoreBarPosition(percentage) {
@@ -602,7 +574,7 @@ class ResumeExtractor {
         const format = 'xlsx';
         
         try {
-            const response = await fetch('http://localhost:8000/download-data', {
+            const response = await fetch('https://resume-info-extractor.up.railway.app/download-data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
