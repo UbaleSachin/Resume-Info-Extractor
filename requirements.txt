@@ -28,3 +28,11 @@ aiofiles==23.2.1
 
 werkzeug
 gunicorn
+
+redis
+
+fastapi
+sqlalchemy
+aiomysql
+passlib[bcrypt]
+python-jose[cryptography]

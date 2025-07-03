@@ -17,6 +17,7 @@ import asyncio
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+import redis
 
 from src.llm.resume_extractor import ResumeExtractor
 from src.llm.candidate_fit import CandidateFitEvaluator
@@ -37,7 +38,7 @@ app.add_middleware(
 
 # Rate limiter for Gemini API (15 requests per minute)
 class RateLimiter:
-    def __init__(self, max_requests=15, time_window=60):
+    def __init__(self, max_requests=100, time_window=60):
         self.max_requests = max_requests
         self.time_window = time_window
         self.requests = deque()
@@ -60,148 +61,81 @@ class RateLimiter:
         await asyncio.sleep(sleep_time)
         await self.acquire()  # Try again
 
-# In-memory job storage with TTL and cleanup
-class InMemoryJobStorage:
-    def __init__(self, ttl_seconds=3600):  # 1 hour TTL
-        self.jobs = {}
-        self.ttl_seconds = ttl_seconds
-        self.lock = threading.RLock()
-        # Start cleanup task
-        self._start_cleanup_task()
+# Redis-based job storage (replace in-memory storage)
+class JobStorage:
+    def __init__(self):
+        self.redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
     
-    def _start_cleanup_task(self):
-        """Start background task to clean up expired jobs"""
-        def cleanup():
-            while True:
-                self._cleanup_expired_jobs()
-                time.sleep(300)  # Check every 5 minutes
-        
-        cleanup_thread = threading.Thread(target=cleanup, daemon=True)
-        cleanup_thread.start()
-    
-    def _cleanup_expired_jobs(self):
-        """Remove expired jobs"""
-        now = datetime.utcnow()
-        with self.lock:
-            expired_jobs = []
-            for job_id, job_data in self.jobs.items():
-                created_at = datetime.fromisoformat(job_data['created_at'])
-                if (now - created_at).total_seconds() > self.ttl_seconds:
-                    expired_jobs.append(job_id)
-            
-            for job_id in expired_jobs:
-                del self.jobs[job_id]
-    
-    def create_job(self, job_id: str, job_type: str):
+    def create_job(self, job_id, job_type):
         job_data = {
             'status': 'pending',
             'results': None,
             'created_at': datetime.utcnow().isoformat(),
-            'updated_at': datetime.utcnow().isoformat(),
-            'type': job_type,
-            'progress': 0
+            'type': job_type
         }
-        with self.lock:
-            self.jobs[job_id] = job_data
+        self.redis_client.setex(f"job:{job_id}", 3600, json.dumps(job_data))  # 1 hour TTL
     
-    def update_job(self, job_id: str, status: str, results=None, progress=None):
-        with self.lock:
-            if job_id in self.jobs:
-                self.jobs[job_id]['status'] = status
-                self.jobs[job_id]['updated_at'] = datetime.utcnow().isoformat()
-                if results is not None:
-                    self.jobs[job_id]['results'] = results
-                if progress is not None:
-                    self.jobs[job_id]['progress'] = progress
+    def update_job(self, job_id, status, results=None):
+        job_data = json.loads(self.redis_client.get(f"job:{job_id}") or '{}')
+        job_data['status'] = status
+        if results:
+            job_data['results'] = results
+        job_data['updated_at'] = datetime.utcnow().isoformat()
+        self.redis_client.setex(f"job:{job_id}", 3600, json.dumps(job_data))
     
-    def get_job(self, job_id: str):
-        with self.lock:
-            return self.jobs.get(job_id, None)
-    
-    def get_job_count(self):
-        with self.lock:
-            return len(self.jobs)
+    def get_job(self, job_id):
+        job_data = self.redis_client.get(f"job:{job_id}")
+        return json.loads(job_data) if job_data else None
 
-# Queue for managing concurrent jobs
+# Queue-based processing for high load scenarios
 class ProcessingQueue:
-    def __init__(self, max_concurrent_jobs=5):
-        self.queue = asyncio.Queue(maxsize=100)  # Limit queue size
+    def __init__(self, max_concurrent_jobs=10):
+        self.queue = asyncio.Queue()
         self.active_jobs = 0
         self.max_concurrent = max_concurrent_jobs
-        self.lock = asyncio.Lock()
-        self.worker_tasks = []
-        #self._start_workers()
+        self.processing_task = None
     
-    def _start_workers(self):
-        """Start worker tasks to process the queue"""
-        for _ in range(self.max_concurrent):
-            task = asyncio.create_task(self._worker())
-            #self.worker_tasks.append(task)
+    async def add_job(self, job_id, files, resume_extractor):
+        await self.queue.put((job_id, files, resume_extractor))
+        if self.processing_task is None:
+            self.processing_task = asyncio.create_task(self._process_queue())
     
-    async def _worker(self):
-        """Worker that processes jobs from the queue"""
+    async def _process_queue(self):
         while True:
+            if self.active_jobs >= self.max_concurrent:
+                await asyncio.sleep(1)
+                continue
+            
             try:
-                job_data = await self.queue.get()
-                if job_data is None:  # Shutdown signal
-                    break
-                
-                async with self.lock:
-                    self.active_jobs += 1
-                
-                # Determine job type and process accordingly
-                job_type = job_data[0]
-                if job_type == 'extraction':
-                    await self._process_extraction_job(*job_data[1:])
-                elif job_type == 'candidate_fit':
-                    await self._process_candidate_fit_job(*job_data[1:])
-                
-                async with self.lock:
-                    self.active_jobs -= 1
-                
-                self.queue.task_done()
-            except Exception as e:
-                print(f"Worker error: {e}")
-                async with self.lock:
-                    self.active_jobs -= 1
+                job_id, files, resume_extractor = await asyncio.wait_for(
+                    self.queue.get(), timeout=1.0
+                )
+                self.active_jobs += 1
+                asyncio.create_task(self._process_job(job_id, files, resume_extractor))
+            except asyncio.TimeoutError:
+                continue
     
-    async def add_job(self, job_type, *args):
-        """Add a job to the processing queue"""
-        try:
-            await asyncio.wait_for(
-                self.queue.put((job_type, *args)), 
-                timeout=5.0
-            )
-            return True
-        except asyncio.TimeoutError:
-            return False  # Queue is full
-    
-    async def _process_extraction_job(self, job_id, files, resume_extractor):
-        """Process a resume extraction job"""
+    async def _process_job(self, job_id, files, resume_extractor):
         try:
             await process_extraction_job_async(job_id, files, resume_extractor)
-        except Exception as e:
-            job_storage.update_job(job_id, 'failed', {'error': str(e)})
-    
-    async def _process_candidate_fit_job(self, job_id, resumes, job_description, evaluator, fit_options=None):
-        """Process a candidate fit evaluation job"""
+        finally:
+            self.active_jobs -= 1
+
+    async def _process_candidate_fit_job(self, job_id, resumes, job_description, evaluator, fit_options):
         try:
             await process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options)
-        except Exception as e:
-            job_storage.update_job(job_id, 'failed', {'error': str(e)})
-    
-    def get_stats(self):
-        return {
-            'active_jobs': self.active_jobs,
-            'queue_size': self.queue.qsize(),
-            'max_concurrent': self.max_concurrent
-        }
+        finally:
+            self.active_jobs -= 1
+
+# Global processing queue
+processing_queue = ProcessingQueue(max_concurrent_jobs=10)
 
 # Global instances
-rate_limiter = RateLimiter(max_requests=15, time_window=60)
-job_storage = InMemoryJobStorage(ttl_seconds=3600)
+rate_limiter = RateLimiter(max_requests=50, time_window=60)
+#job_storage = InMemoryJobStorage(ttl_seconds=3600)
 executor = ThreadPoolExecutor(max_workers=10)
-processing_queue = ProcessingQueue(max_concurrent_jobs=5)
+#processing_queue = ProcessingQueue(max_concurrent_jobs=5)
+job_storage = JobStorage()
 
 # Initialize extractors
 resume_extractor = ResumeExtractor()
@@ -237,38 +171,19 @@ async def process_single_resume(resume_extractor, file_path, filename):
         return {"filename": filename, "error": str(e), "success": False}
 
 async def process_extraction_job_async(job_id, files, resume_extractor):
-    """Process extraction job with progress tracking"""
+    """Improved async processing with concurrent requests within rate limits"""
     results = []
-    total_files = len(files)
-    
-    # Update job status to processing
-    job_storage.update_job(job_id, 'processing', progress=0)
     
     # Process files concurrently but respect rate limits
-    semaphore = asyncio.Semaphore(3)  # Limit concurrent operations
+    semaphore = asyncio.Semaphore(10)  # Limit concurrent operations
     
-    async def process_with_semaphore(file_info, index):
+    async def process_with_semaphore(file_info):
         async with semaphore:
             file_path, filename = file_info
-            result = await process_single_resume(resume_extractor, file_path, filename)
-            
-            # Update progress
-            progress = int((index + 1) * 100 / total_files)
-            job_storage.update_job(job_id, 'processing', progress=progress)
-            
-            # Cleanup temp file
-            try:
-                os.unlink(file_path)
-            except:
-                pass
-            
-            return result
+            return await process_single_resume(resume_extractor, file_path, filename)
     
     # Create tasks for all files
-    tasks = [
-        process_with_semaphore(file_info, i) 
-        for i, file_info in enumerate(files)
-    ]
+    tasks = [process_with_semaphore(file_info) for file_info in files]
     
     # Process in batches to manage memory
     batch_size = 50
@@ -281,9 +196,13 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
                 results.append({"error": str(result), "success": False})
             else:
                 results.append(result)
+        
+        # Update progress
+        progress = min(100, (i + batch_size) * 100 // len(tasks))
+        job_storage.update_job(job_id, f'processing_{progress}%')
     
     # Mark job as completed
-    job_storage.update_job(job_id, 'completed', results, progress=100)
+    job_storage.update_job(job_id, 'completed', results)
 
 async def process_single_candidate_fit(evaluator, resume, job_description, fit_options=None):
     """Process a single candidate fit evaluation with rate limiting"""
@@ -349,7 +268,7 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
 
 @app.on_event("startup")
 async def start_processing_workers():
-    processing_queue._start_workers()
+    processing_queue._process_queue()
 
 # API Endpoints
 @app.get("/")
@@ -358,77 +277,45 @@ async def root():
 
 @app.post("/extract-resume")
 async def extract_resume_data(files: List[UploadFile] = File(...)):
-    """Extract data from uploaded resume files using Gemini API with async processing"""
+    """
+    Extract data from uploaded resume files using Gemini API with improved concurrency
+    """
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
     
     # Limit number of files per request
-    if len(files) > 500:
-        raise HTTPException(status_code=400, detail="Too many files. Maximum 500 files per request.")
+    if len(files) > 1000:
+        raise HTTPException(status_code=400, detail="Too many files. Maximum 1000 files per request.")
     
     job_id = str(uuid.uuid4())
     file_infos = []
     
-    try:
-        for file in files:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
-                content = await file.read()
-                tmp_file.write(content)
-                tmp_file_path = tmp_file.name
-            file_infos.append((tmp_file_path, file.filename))
-        
-        # Create job in storage
-        job_storage.create_job(job_id, 'extraction')
-        
-        # Add to processing queue
-        queued = await processing_queue.add_job('extraction', job_id, file_infos, resume_extractor)
-        
-        if not queued:
-            # Clean up temp files if queue is full
-            for file_path, _ in file_infos:
-                try:
-                    os.unlink(file_path)
-                except:
-                    pass
-            raise HTTPException(status_code=503, detail="Server is busy. Please try again later.")
-        
-        return {
-            'success': True, 
-            'job_id': job_id, 
-            'status': 'queued',
-            'estimated_time_minutes': len(files) // 15 + 1
-        }
+    for file in files:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        file_infos.append((tmp_file_path, file.filename))
     
-    except Exception as e:
-        # Clean up temp files on error
-        for file_path, _ in file_infos:
-            try:
-                os.unlink(file_path)
-            except:
-                pass
-        raise HTTPException(status_code=500, detail=str(e))
+    # Create job in storage
+    job_storage.create_job(job_id, 'extraction')
+    
+    # Start async processing
+    asyncio.create_task(process_extraction_job_async(job_id, file_infos, resume_extractor))
+    
+    return {'success': True, 'job_id': job_id, 'status': 'pending'}
 
 @app.get("/extract-resume-/{job_id}")
 async def get_extraction_status(job_id: str):
-    """Get extraction job status with progress tracking"""
+    """Get job status with progress tracking"""
     job = job_storage.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    response = {
-        'success': True, 
-        'status': job['status'],
-        'progress': job.get('progress', 0),
-        'created_at': job['created_at'],
-        'updated_at': job['updated_at']
-    }
-    
     if job['status'] == 'completed':
-        response['extracted_data'] = job['results']
-    elif job['status'] == 'failed':
-        response['error'] = job.get('results', {}).get('error', 'Unknown error')
-    
-    return response
+        return {'success': True, 'status': 'completed', 'extracted_data': job['results']}
+    else:
+        return {'success': True, 'status': job['status']}
 
 @app.post("/extract-job-description")
 async def extract_job_description(request: JobDescriptionRequest):

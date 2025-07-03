@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login - Resume Extractor</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #f1f1f3 0%, #56d6d6 100%);
+        }
+        .login-container {
+            background: rgba(255,255,255,0.22);
+            border: 1.5px solid rgba(255,255,255,0.35);
+            border-radius: 22px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+            padding: 48px 36px;
+            max-width: 400px;
+            width: 100%;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .login-container h2 {
+            margin-bottom: 24px;
+            color: #333;
+        }
+        .login-container input {
+            width: 100%;
+            margin-bottom: 18px;
+        }
+        .login-container button {
+            width: 100%;
+        }
+        .login-container .error-message {
+            color: #dc3545;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2>Login</h2>
+        <div class="error-message" id="loginError" style="display:none;"></div>
+        <input type="text" id="username" placeholder="Username" class="frosted-btn">
+        <input type="password" id="password" placeholder="Password" class="frosted-btn">
+        <button class="btn btn-primary frosted-btn" id="loginBtn">Login</button>
+        <button class="btn btn-success frosted-btn" id="registerBtn" style="margin-top:10px;">Register</button>
+    </div>
+    <script>
+        async function loginOrRegister(endpoint) {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.style.display = 'none';
+            if (!username || !password) {
+                errorDiv.textContent = 'Please enter both username and password.';
+                errorDiv.style.display = 'block';
+                return;
+            }
+            try {
+                const resp = await fetch(`http://localhost:8000/${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'Login failed');
+                if (endpoint === 'login') {
+                    localStorage.setItem('token', data.access_token);
+                    window.location.href = 'index.html';
+                } else {
+                    alert('Registration successful! Please login.');
+                }
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+        document.getElementById('loginBtn').onclick = () => loginOrRegister('login');
+        document.getElementById('registerBtn').onclick = () => loginOrRegister('register');
+    </script>
+</body>
+</html>

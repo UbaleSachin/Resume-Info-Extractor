@@ -33,7 +33,6 @@
                         <div style="display: flex; gap: 10px;">
                             <button class="btn btn-primary frosted-btn" id="generateBtn">Generate</button>
                             <button class="btn btn-primary frosted-btn" id="removeAllBtn">Remove All</button>
-                            <button class="btn btn-primary frosted-btn" id="candidateFitBtn" style="display: none;">Get Candidate Fit</button>
                         </div>
                     </div>
                 </div>
@@ -46,10 +45,11 @@
             </script>
         <div class="results-section" id="resultsSection" style="display: none;">
             <h3>Extracted Data</h3>
-            <div class="download-options">
-                <button class="btn btn-primary frosted-btn" id="downloadBtn">Download Excel</button>
-            </div>
             <div class="data-preview" id="dataPreview"></div>
+            <div class="download-options" style="display: flex; gap: 10px;">
+                <button class="btn btn-primary frosted-btn" id="downloadBtn">Download Excel</button>
+                <button class="btn btn-primary frosted-btn" id="candidateFitBtn" style="display: none;">Get Candidate Fit</button>
+            </div>
         </div>
 
         <div class="error-message" id="errorMessage" style="display: none;">

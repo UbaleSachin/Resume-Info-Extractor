@@ -17,6 +17,44 @@ logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
+import time
+from collections import defaultdict, deque
+
+class ModelRateLimiter:
+    def __init__(self, rpm_limits):
+        self.rpm_limits = rpm_limits  # {'model_name': rpm}
+        self.request_times = defaultdict(deque)  # {'model_name': deque([timestamps])}
+
+    def can_send(self, model_name):
+        now = time.time()
+        window = 60  # seconds
+        q = self.request_times[model_name]
+        # Remove requests older than 60 seconds
+        while q and q[0] < now - window:
+            q.popleft()
+        return len(q) < self.rpm_limits[model_name]
+
+    def record(self, model_name):
+        self.request_times[model_name].append(time.time())
+
+    def wait_for_slot(self, model_name):
+        while not self.can_send(model_name):
+            time.sleep(0.5)
+
+rate_limiter = ModelRateLimiter({
+    'llama3-70b-8192': 30,
+    'llama3-8b-8192': 30,
+    'llama-3.3-70b-versatile': 30,
+    'mixtral-saba-24b': 30,
+    'gemma-3-27b-it': 30,
+    'gemma-3-12b-it': 30,
+    'gemma-3n-e4b-it': 30,
+    'gemma-3n-e2b-it': 30,
+    'gemini-2.0-flash-lite': 30,
+    'gemini-2.0-flash': 15,
+    'gemini-2.5-flash-preview-04-17': 10,
+})
+
 class ResumeExtractor:
     """Enhanced resume extractor with multi-API provider support"""
     
@@ -373,7 +411,9 @@ class ResumeExtractor:
                 print(f"Using {self.current_provider} - {current_model} (Attempt {attempt + 1})")
                 
                 # Make API call
+                rate_limiter.wait_for_slot(current_model)  # Ensure we don't exceed model-specific RPM
                 response_text = self._make_api_call(text_content, self.current_provider, current_model)
+                rate_limiter.record(current_model)  # Record the request time
                 
                 if response_text:
                     try:
