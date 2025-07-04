@@ -36,3 +36,5 @@ sqlalchemy
 aiomysql
 passlib[bcrypt]
 python-jose[cryptography]
+
+mysql-connector-python

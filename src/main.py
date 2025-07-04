@@ -1,4 +1,11 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, status, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, Integer, String, select
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -9,7 +16,7 @@ import pandas as pd
 import io
 from io import BytesIO, StringIO
 import tempfile
-import os
+import os, asyncio
 import uuid
 import threading
 import time
@@ -18,12 +25,44 @@ from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import redis
+from dotenv import load_dotenv
 
 from src.llm.resume_extractor import ResumeExtractor
 from src.llm.candidate_fit import CandidateFitEvaluator
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
+
+load_dotenv()
+
+DATABASE_URL = "mysql+aiomysql://username:password@localhost:3306/yourdbname"  # Replace with your actual database URL
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(64), unique = True, index=True)
+    hashed_password = Column(String(128))
+
+async def create_db():
+    async with engine.begin() as cnn:
+        await cnn.run_sync(Base.metadata.create_all)
+
+class UserIn(BaseModel):
+     username:str
+     password:str
+
+class Token(BaseModel):
+    access_token: str
+    token_type:str
 
 app = FastAPI(title="Resume Extractor API", version="2.0.0")
 
@@ -266,11 +305,76 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
 
-@app.on_event("startup")
+"""@app.on_event("startup")
 async def start_processing_workers():
+    processing_queue._process_queue()"""
+
+@app.on_event("startup")
+async def startup():
+    await create_db()
     processing_queue._process_queue()
 
-# API Endpoints
+def verify_password(plain, hashed):
+    return pwd_context.verify(plain, hashed)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+async def get_user(session, username: str):
+    result = await session.execute(
+        select(User).where(User.username == username)
+    )
+    return result.scalar_one_or_none()
+
+async def get_user_by_id(session, user_id: int):
+    """Get user by ID - returns User object or None"""
+    return await session.get(User, user_id)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code = status.HTTP_401_UNAUTHORIZED, detail="Could not validate creadentials", 
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    async with AsyncSessionLocal() as session:
+        user = await get_user(session, username)
+        if user is None:
+            raise credentials_exception
+        return user
+    
+@app.post("/register")
+async def register(user: UserIn):
+    async with AsyncSessionLocal() as session:
+        db_user = await get_user(session, user.username)
+        if db_user:
+            raise HTTPException(status_code=400, detail="Username alrady exists")
+        hashed_password = get_password_hash(user.password)
+        new_user = User(username = user.username, hashed_password = hashed_password)
+        session.add(new_user)
+        await session.commit()
+        return {"message": "user registered successfully"}
+    
+@app.post("/login", response_model=Token)
+async def login(from_data: UserIn):
+    async with AsyncSessionLocal() as session:
+        user = await get_user(session, from_data.username)
+        if not user or not verify_password(from_data.password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        access_token = create_access_token(data={"sub": user.username})
+        return {"access_token": access_token, "token_type": "bearer"}
+    
+
 @app.get("/")
 async def root():
     return {"message": "Resume Extractor API v2.0 is running with async processing"}
@@ -448,6 +552,17 @@ async def download_fit_excel(data: dict):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
     )
+@app.post("/save-extracted-data")
+async def save_extracted_data(data: dict, user=Depends(get_current_user)):
+    # Save data to a table with user_id reference (implement your own model)
+    # Example: ResumeData(user_id=user.id, data=json.dumps(data))
+    return {"msg": "Data saved for user", "user": user.username}
+
+# Example: Get extracted data for a user
+@app.get("/get-extracted-data")
+async def get_extracted_data(user=Depends(get_current_user)):
+    # Query your ResumeData table for user_id=user.id
+    return {"msg": "Fetched data for user", "user": user.username}
 
 @app.get("/system/health")
 async def health_check():
