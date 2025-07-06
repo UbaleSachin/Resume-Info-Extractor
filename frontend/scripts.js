@@ -420,7 +420,7 @@ class ResumeExtractor {
             let extractedData = null;
             while (true) {
                 await new Promise(res => setTimeout(res, 3000)); // wait 3 seconds
-                const pollResp = await fetch(`http://localhost:8000/extract-resume-/${jobId}`);
+                const pollResp = await fetch(`http://localhost:8000/extract-resume/${jobId}`);
                 const pollData = await pollResp.json();
                 if (pollData.status === 'completed') {
                     extractedData = pollData;

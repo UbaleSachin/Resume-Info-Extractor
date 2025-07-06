@@ -194,3 +194,6 @@ cython_debug/
 .cursorindexingignore
 
 resume_api_usage_tracking.json
+candidate_fit_api_usage.json
+candidate_fit_cache.json
+resume_cache/

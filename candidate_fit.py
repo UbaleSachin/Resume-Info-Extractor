@@ -1,11 +1,11 @@
 import os
 import json
+import requests
 from datetime import datetime
 from typing import Dict, Any, Optional, Union
 from dotenv import load_dotenv
 from openai import OpenAI
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -14,61 +14,61 @@ load_dotenv()
 
 class CandidateFitEvaluator:
     """
-    Evaluates candidate fit for a job description using OpenAI API.
+    Evaluates candidate fit for a job description using LLM (Gemini or Groq).
+    Rotates between models/providers based on API limits.
     """
 
     def __init__(self):
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+        self.groq_api_key = os.getenv('GROQ_API_KEY')
         self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY environment variable is required")
-        
-        self.client = OpenAI(api_key=self.openai_api_key)
-        self.model = 'gpt-3.5-turbo'
-        self.daily_limit = 10000
-        
+
+        self.providers = {
+            'gemini': {
+                'base_url': 'https://generativelanguage.googleapis.com/v1beta',
+                'models': [
+                    ('gemma-3-27b-it', 14400),
+                    ('gemma-3-12b-it', 14400),
+                    ('gemma-3n-e4b-it', 14400),
+                    ('gemma-3n-e2b-it', 14400),
+                    ('gemini-2.0-flash-lite', 1500),
+                    ('gemini-2.0-flash', 1500),
+                    ('gemini-2.5-flash-preview-04-17', 500),
+                ],
+                'api_key': self.gemini_api_key
+            },
+            'groq': {
+                'base_url': 'https://api.groq.com/openai/v1',
+                'models': [
+                    ('llama3-70b-8192', 14400),
+                    ('llama3-8b-8192', 14400),
+                    ('llama-3.3-70b-versatile', 1000),
+                    ('mixtral-saba-24b', 1000),
+                ],
+                'api_key': self.groq_api_key
+            },
+            'openai': {
+                'models': [('gpt-3.5-turbo', 10000),],
+                'api_key': self.openai_api_key,
+            }
+        }
         self.usage_file = 'candidate_fit_api_usage.json'
         self.usage_data = self._load_usage_data()
-        
-        # Cache for consistent results
-        self.cache_file = 'candidate_fit_cache.json'
-        self.cache_data = self._load_cache_data()
+        self.provider_order = ['openai']
+        self.current_provider_idx = 0
+        self.current_model_idx = 0
 
         self.prompt_template = """You are an expert HR recruiter and AI assistant. Given the following job description and candidate resume data, analyze and compare the candidate's qualifications, skills, and experience to the job requirements.
 
 {custom_instructions}
 
-SCORING METHODOLOGY:
-- Base score starts at 0
-- Add 10 points for each major required skill matched
-- Add 5 points for each nice-to-have skill matched
-- Add 20 points if minimum experience requirement is met
-- Add 15 points if education requirement is met
-- Add 5 points for each additional relevant certification/skill
-- Subtract 20 points for each critical requirement missed (deal breakers)
-- Subtract 10 points for each major required skill missing
-- Final score should be between 0-100
-
-EVALUATION RULES:
-1. Be systematic and objective in your evaluation
-2. Score each requirement individually before calculating total
-3. Use consistent criteria for all evaluations
-4. Consider only explicitly mentioned skills and requirements
-5. Do not make assumptions about unstated qualifications
-
 Return a JSON object with:
 - "summary": A concise summary (2-4 sentences) explaining if the candidate is a good fit for the job, mentioning key matches and gaps.
-- "fit_percentage": An integer percentage (0-100) representing how well the candidate fits the job. Use the scoring methodology above.
-- "key_matches": Array of strings listing main skills/requirements the candidate matches.
-- "key_gaps": Array of strings listing main skills/requirements the candidate lacks.
-- "scoring_breakdown": Object with individual scores for transparency:
-  - "required_skills_matched": number of required skills found
-  - "required_skills_missed": number of required skills missing
-  - "experience_match": boolean indicating if experience requirement is met
-  - "education_match": boolean indicating if education requirement is met
-  - "nice_to_have_matched": number of nice-to-have skills found
-  - "deal_breakers_missed": number of deal breakers missing
+- "fit_percentage": An approximate percentage (0-100) representing how well the candidate fits the job (e.g., 80 for strong fit, 40 for weak fit).
+- "key_matches": List of main skills/requirements the candidate matches.
+- "key_gaps": List of main skills/requirements the candidate lacks.
 
-IMPORTANT: Only return the JSON object, no extra text. Be consistent and deterministic in your scoring.
+IMPORTANT: Only return the JSON object, no extra text.
 
 Job Description:
 {job_description}
@@ -77,44 +77,7 @@ Candidate Resume:
 {resume}
 """
 
-    def _load_cache_data(self):
-        """Load cache data from file."""
-        try:
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r') as f:
-                    return json.load(f)
-            else:
-                return {}
-        except Exception:
-            return {}
-
-    def _save_cache_data(self):
-        """Save cache data to file."""
-        try:
-            with open(self.cache_file, 'w') as f:
-                json.dump(self.cache_data, f, indent=2)
-        except Exception:
-            pass
-
-    def _generate_cache_key(self, resume_data: Dict[str, Any], job_description_data: Union[str, Dict[str, Any]], fit_options: Optional[Dict[str, Any]] = None) -> str:
-        """Generate a unique cache key for the evaluation request."""
-        import hashlib
-        
-        # Normalize inputs for consistent hashing
-        if isinstance(job_description_data, dict):
-            job_desc_text = json.dumps(job_description_data, sort_keys=True)
-        else:
-            job_desc_text = str(job_description_data)
-        
-        resume_text = json.dumps(resume_data, sort_keys=True)
-        options_text = json.dumps(fit_options or {}, sort_keys=True)
-        
-        # Create hash of all inputs
-        combined_text = f"{resume_text}|{job_desc_text}|{options_text}"
-        return hashlib.md5(combined_text.encode()).hexdigest()
-
     def _load_usage_data(self):
-        """Load API usage data from file."""
         try:
             if os.path.exists(self.usage_file):
                 with open(self.usage_file, 'r') as f:
@@ -125,7 +88,6 @@ Candidate Resume:
             return {}
 
     def _save_usage_data(self):
-        """Save API usage data to file."""
         try:
             with open(self.usage_file, 'w') as f:
                 json.dump(self.usage_data, f, indent=2)
@@ -133,30 +95,43 @@ Candidate Resume:
             pass
 
     def _get_today_key(self):
-        """Get today's date as a string key."""
         return datetime.now().strftime('%Y-%m-%d')
 
-    def _update_api_usage(self, count=1):
-        """Update API usage counter."""
+    def _update_api_usage(self, provider, model, count=1):
         today = self._get_today_key()
-        if 'openai' not in self.usage_data:
-            self.usage_data['openai'] = {}
-        if self.model not in self.usage_data['openai']:
-            self.usage_data['openai'][self.model] = {}
-        if today not in self.usage_data['openai'][self.model]:
-            self.usage_data['openai'][self.model][today] = 0
-        self.usage_data['openai'][self.model][today] += count
+        if provider not in self.usage_data:
+            self.usage_data[provider] = {}
+        if model not in self.usage_data[provider]:
+            self.usage_data[provider][model] = {}
+        if today not in self.usage_data[provider][model]:
+            self.usage_data[provider][model][today] = 0
+        self.usage_data[provider][model][today] += count
         self._save_usage_data()
 
-    def _get_today_usage(self):
-        """Get today's API usage count."""
+    def _get_today_usage(self, provider, model):
         today = self._get_today_key()
-        return self.usage_data.get('openai', {}).get(self.model, {}).get(today, 0)
+        return self.usage_data.get(provider, {}).get(model, {}).get(today, 0)
 
-    def _can_use_api(self):
-        """Check if API can be used based on daily limit."""
-        usage = self._get_today_usage()
-        return usage < self.daily_limit
+    def _can_use_model(self, provider, model, daily_limit):
+        usage = self._get_today_usage(provider, model)
+        return usage < daily_limit
+
+    def _switch_to_next_model(self):
+        # Try next model in current provider
+        provider = self.provider_order[self.current_provider_idx]
+        models = self.providers[provider]['models']
+        if self.current_model_idx < len(models) - 1:
+            self.current_model_idx += 1
+            return True
+        # Try next provider
+        for idx in range(len(self.provider_order)):
+            next_provider_idx = (self.current_provider_idx + 1 + idx) % len(self.provider_order)
+            next_provider = self.provider_order[next_provider_idx]
+            if self.providers[next_provider]['api_key']:
+                self.current_provider_idx = next_provider_idx
+                self.current_model_idx = 0
+                return True
+        return False
 
     def _build_custom_instructions(self, fit_options: Optional[Dict[str, Any]]) -> str:
         """Build custom instructions based on fit_options"""
@@ -265,44 +240,6 @@ Candidate Resume:
         
         return ""
 
-    def _extract_json(self, text: str) -> str:
-        """Extract JSON from response text."""
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*$', '', text)
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            return json_match.group(0).strip()
-        return text.strip()
-
-    def _make_openai_api_call(self, prompt: str, max_tokens: int = 1000, seed: int = 42) -> Optional[str]:
-        """Make API call to OpenAI with deterministic settings."""
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a precise HR evaluation assistant. Always provide consistent, objective evaluations based solely on the provided criteria. Be deterministic in your scoring."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
-                ],
-                max_tokens=max_tokens,
-                temperature=0,  # Set to 0 for maximum determinism
-                seed=seed,      # Add seed for reproducibility
-                top_p=1.0,      # Use full probability distribution
-                frequency_penalty=0,  # No frequency penalty
-                presence_penalty=0    # No presence penalty
-            )
-            
-            self._update_api_usage(1)
-            return completion.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Error making OpenAI API call: {str(e)}")
-            return None
-
     def evaluate_fit(self, resume_data: Dict[str, Any], job_description_data: Union[str, Dict[str, Any]], fit_options: Optional[Dict[str, Any]] = None, max_retries: int = 3) -> Optional[Dict[str, Any]]:
         """
         Evaluate candidate fit with optional customization parameters.
@@ -330,17 +267,6 @@ Candidate Resume:
         Returns:
             Dictionary with evaluation results or None if failed
         """
-        # Check cache first for consistent results
-        cache_key = self._generate_cache_key(resume_data, job_description_data, fit_options)
-        if cache_key in self.cache_data:
-            logger.info("Returning cached result for consistent evaluation")
-            return self.cache_data[cache_key]
-        
-        # Check if API can be used
-        if not self._can_use_api():
-            logger.warning(f"Daily API limit ({self.daily_limit}) reached for OpenAI")
-            return None
-        
         # Prepare job description text
         if isinstance(job_description_data, dict):
             job_desc_text = json.dumps(job_description_data, indent=2, ensure_ascii=False)
@@ -360,47 +286,128 @@ Candidate Resume:
             resume=resume_text
         )
 
-        # Try API call with retries
         for attempt in range(max_retries):
-            if not self._can_use_api():
-                logger.warning(f"Daily API limit ({self.daily_limit}) reached for OpenAI")
-                return None
-            
-            response_text = self._make_openai_api_call(prompt)
-            
-            if response_text:
-                try:
-                    json_str = self._extract_json(response_text)
-                    parsed_result = json.loads(json_str)
-                    
-                    # Validate required fields
-                    required_fields = ['summary', 'fit_percentage', 'key_matches', 'key_gaps']
-                    if all(field in parsed_result for field in required_fields):
-                        # Cache the result for future use
-                        cache_key = self._generate_cache_key(resume_data, job_description_data, fit_options)
-                        self.cache_data[cache_key] = parsed_result
-                        self._save_cache_data()
-                        return parsed_result
-                    else:
-                        logger.warning(f"Response missing required fields: {parsed_result}")
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse JSON response: {e}")
-                    logger.warning(f"Response text: {response_text}")
-            
-            logger.warning(f"API call attempt {attempt + 1} failed, retrying...")
-        
-        logger.error("All API call attempts failed")
+            provider = self.provider_order[self.current_provider_idx]
+            provider_conf = self.providers[provider]
+            model, daily_limit = provider_conf['models'][self.current_model_idx]
+            api_key = provider_conf['api_key']
+
+            if not api_key or not self._can_use_model(provider, model, daily_limit):
+                if not self._switch_to_next_model():
+                    break
+                continue
+
+            if provider == 'gemini':
+                result = self._call_gemini(prompt, model, api_key)
+            elif provider == 'groq':
+                result = self._call_groq(prompt, model, api_key)
+            else:
+                result = None
+
+            if result:
+                self._update_api_usage(provider, model, 1)
+                return result
+            else:
+                if not self._switch_to_next_model():
+                    break
         return None
 
-    def get_usage_stats(self) -> Dict[str, Any]:
-        """Get current API usage statistics."""
-        today = self._get_today_key()
-        today_usage = self._get_today_usage()
-        
-        return {
-            'today_date': today,
-            'today_usage': today_usage,
-            'daily_limit': self.daily_limit,
-            'remaining_calls': max(0, self.daily_limit - today_usage),
-            'model': self.model
+    def _make_openai_api_call(self, text_content: str, model: str) -> Optional[str]:
+        """Make API call to openAI for resume extraction."""
+        try:
+            full_prompt = self.extraction_prompt + text_content
+            client = OpenAI(api_key = self.openai_api_key)
+            completion = client.chat.completions.create(
+                model = model,
+                messages = [
+                    {
+                        "role": "user", "content": full_prompt,
+                    }
+                ],
+                max_tokens = 2000,
+                temperature = 0  # Lower temperature for more consistent JSON output
+            )
+
+            # upadte usage tracking
+            self._update_api_usage('openai', model, 1)
+            return completion.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error making OpenAI API call: {str(e)}")
+            return None
+
+    def _call_gemini(self, prompt, model, api_key):
+        url = f"{self.providers['gemini']['base_url']}/models/{model}:generateContent"
+        params = {'key': api_key}
+        payload = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 1000
+            }
         }
+        headers = {'Content-Type': 'application/json'}
+        try:
+            response = requests.post(url, params=params, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                if 'candidates' in result and len(result['candidates']) > 0:
+                    content = result['candidates'][0]['content']
+                    if 'parts' in content and len(content['parts']) > 0:
+                        response_text = content['parts'][0]['text']
+                        json_str = self._extract_json(response_text)
+                        parsed_result = json.loads(json_str)
+                        required_fields = ['summary', 'fit_percentage', 'key_matches', 'key_gaps']
+                        if all(field in parsed_result for field in required_fields):
+                            return parsed_result
+            return None
+        except Exception:
+            return None
+
+    def _call_groq(self, prompt, model, api_key):
+        url = f"{self.providers['groq']['base_url']}/chat/completions"
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': model,
+            'messages': [
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ],
+            'max_tokens': 1000,
+            'temperature': 0.1
+        }
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            if response.status_code == 200:
+                result = response.json()
+                if 'choices' in result and len(result['choices']) > 0:
+                    response_text = result['choices'][0]['message']['content']
+                    json_str = self._extract_json(response_text)
+                    parsed_result = json.loads(json_str)
+                    required_fields = ['summary', 'fit_percentage', 'key_matches', 'key_gaps']
+                    if all(field in parsed_result for field in required_fields):
+                        return parsed_result
+            return None
+        except Exception:
+            return None
+
+    def _extract_json(self, text: str) -> str:
+        import re
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*$', '', text)
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            return json_match.group(0).strip()
+        return text.strip()

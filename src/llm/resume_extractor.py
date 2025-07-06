@@ -10,6 +10,9 @@ import docx
 import pandas as pd
 import re
 from dotenv import load_dotenv
+from openai import OpenAI
+import asyncio
+from collections import defaultdict, deque
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -17,181 +20,162 @@ logging.basicConfig(level=logging.INFO)
 
 load_dotenv()
 
-import time
-from collections import defaultdict, deque
-
-class ModelRateLimiter:
-    def __init__(self, rpm_limits):
-        self.rpm_limits = rpm_limits  # {'model_name': rpm}
-        self.request_times = defaultdict(deque)  # {'model_name': deque([timestamps])}
-
-    def can_send(self, model_name):
-        now = time.time()
-        window = 60  # seconds
-        q = self.request_times[model_name]
-        # Remove requests older than 60 seconds
-        while q and q[0] < now - window:
-            q.popleft()
-        return len(q) < self.rpm_limits[model_name]
-
-    def record(self, model_name):
-        self.request_times[model_name].append(time.time())
-
-    def wait_for_slot(self, model_name):
-        while not self.can_send(model_name):
-            time.sleep(0.5)
-
-rate_limiter = ModelRateLimiter({
-    'llama3-70b-8192': 30,
-    'llama3-8b-8192': 30,
-    'llama-3.3-70b-versatile': 30,
-    'mixtral-saba-24b': 30,
-    'gemma-3-27b-it': 30,
-    'gemma-3-12b-it': 30,
-    'gemma-3n-e4b-it': 30,
-    'gemma-3n-e2b-it': 30,
-    'gemini-2.0-flash-lite': 30,
-    'gemini-2.0-flash': 15,
-    'gemini-2.5-flash-preview-04-17': 10,
-})
-
 class ResumeExtractor:
-    """Enhanced resume extractor with multi-API provider support"""
+    """Enhanced resume extractor with multi-API provider support and async compatibility"""
     
     def __init__(self):
         """Initialize the multi-API resume extractor."""
-        
         # API configurations
-        self.groq_api_key = os.getenv('GROQ_API_KEY')
         self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is not set")
         
         # Available API providers and models
         self.api_providers = {
-            'groq': {
-                'base_url': 'https://api.groq.com/openai/v1',
-                'models': [
-                    ('llama3-70b-8192', 14400),
-                    ('llama3-8b-8192', 14400),
-                    ('llama-3.3-70b-versatile', 1000),
-                    ('mixtral-saba-24b', 1000),
-                ],
-                'api_key': self.groq_api_key
-            },
-            'gemini': {
-                'base_url': 'https://generativelanguage.googleapis.com/v1beta',
-                'models': [
-                    ('gemma-3-27b-it', 14400),
-                    ('gemma-3-12b-it', 14400),
-                    ('gemma-3n-e4b-it', 14400),
-                    ('gemma-3n-e2b-it', 14400),
-                    ('gemini-2.0-flash-lite', 1500),
-                    ('gemini-2.0-flash', 1500),
-                    ('gemini-2.5-flash-preview-04-17', 500),
-                ],
-                'api_key': self.gemini_api_key
+            'openai': {
+                'models': [('gpt-3.5-turbo', 4000)],  # Added gpt-4 as backup
+                'api_key': self.openai_api_key,
             }
         }
         
         # Current provider and model
-        self.current_provider = 'groq'  # Default to Gemini
+        self.current_provider = 'openai'
         self.current_model_index = 0
-        
-        # Determine which provider to use based on available API keys
-        if not self.gemini_api_key and self.groq_api_key:
-            self.current_provider = 'groq'
-        elif not self.gemini_api_key and not self.groq_api_key and self.openai_api_key:
-            self.current_provider = 'openai'
-        elif not any([self.gemini_api_key, self.groq_api_key, self.openai_api_key]):
-            raise ValueError("At least one API key must be set: GEMINI_API_KEY, GROQ_API_KEY, or OPENAI_API_KEY")
         
         # Usage tracking
         self.usage_file = 'resume_api_usage_tracking.json'
         self.usage_data = self._load_usage_data()
-
         
-        # Define extraction prompt
-        self.extraction_prompt = """
-        You are an expert resume parser. Extract the following information from the resume text provided.
-        Return the data in JSON format with the exact structure shown below:
-
-        {
-            "personal_info": {
-                "name": "Full name of the candidate",
-                "email": "Email address",
-                "phone": "Full phone number including country code if available",
-                "location": "City, State/Country",
-                "linkedin": "LinkedIn profile URL",
-                "portfolio": "Portfolio/website URL"
-            },
-            "summary": "Professional summary or objective statement",
-            "skills": [
-                "List of technical and soft skills"
-            ],
-            "experience": [
-                {
-                    "title": "Job title",
-                    "company": "Company name",
-                    "location": "Job location",
-                    "duration": "Start date - End date",
-                    "description": "Job description and achievements"
-                }
-            ],
-            "education": [
-                {
-                    "degree": "Degree name",
-                    "institution": "Institution name",
-                    "location": "Institution location",
-                    "year": "Graduation year or duration",
-                    "gpa": "GPA if mentioned"
-                }
-            ],
-            "certifications": [
-                {
-                    "name": "Certification name",
-                    "issuer": "Issuing organization",
-                    "date": "Date obtained",
-                    "expiry": "Expiry date if any"
-                }
-            ],
-            "projects": [
-                {
-                    "name": "Project name",
-                    "description": "Project description",
-                    "technologies": ["Technologies used"],
-                    "duration": "Project duration"
-                }
-            ],
-            "languages": [
-                {
-                    "language": "Language name",
-                    "proficiency": "Proficiency level"
-                }
-            ],
-            "awards": [
-                "List of awards and achievements"
-            ]
+        # Rate limiting - aligned with main.py settings
+        self.daily_limits = {
+            'openai': 500  # RPM limit for gpt-3.5-turbo
         }
 
-        Instructions:
-        1. Extract only the information that is clearly present in the resume
-        2. Extract the complete phone number, including country code if provided (e.g., +1, +91)
-        3. For missing information, use empty strings
-        4. Normalize dates to a consistent format (MM/YYYY or YYYY)
-        5. Clean up text by removing extra whitespace and formatting
-        6. For skills, extract both technical and soft skills
-        7. For experience, focus on quantifiable achievements when possible
-        8. Ensure all JSON is properly formatted and valid
-        9. If email or phone patterns are found but look incomplete, still include them
-        10. Extract skills from throughout the document, not just skills sections
-        11. IMPORTANT: Return ONLY the JSON object, no additional text or explanations
+        # Define extraction prompt with better JSON structure
+        self.extraction_prompt = """
+You are an expert resume parser. Extract relevant information from the resume below and return it in **valid JSON** with the following structure:
 
-        Resume text:
-        """
+{
+  "personal_info": {
+    "name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "linkedin": "",
+    "portfolio": ""
+  },
+  "summary": "",
+  "skills": [],
+  "experience": [
+    {
+      "title": "",
+      "company": "",
+      "location": "",
+      "duration": "",
+      "description": []
+    }
+  ],
+  "education": [
+    {
+      "degree": "",
+      "institution": "",
+      "location": "",
+      "year": "",
+      "gpa": ""
+    }
+  ],
+  "certifications": [
+    {
+      "name": "",
+      "issuer": "",
+      "date": "",
+      "expiry": ""
+    }
+  ],
+  "projects": [
+    {
+      "name": "",
+      "description": "",
+      "technologies": [],
+      "duration": ""
+    }
+  ],
+  "languages": [
+    {
+      "language": "",
+      "proficiency": ""
+    }
+  ],
+  "awards": []
+}
 
+**Rules:**
+- Extract only data present in the resume
+- Use empty strings for missing values
+- Include full phone number with country code (e.g., +1, +91) if present
+- Normalize dates (MM/YYYY or YYYY format)
+- Clean extra whitespace
+- Extract both technical and soft skills
+- Include partial email or phone if incomplete
+- For experience description, use array of bullet points
+- Return only the JSON object — no extra text or markdown
+
+Resume text:
+"""
+        
+        # Initialize OpenAI client
+        self.openai_client = OpenAI(api_key=self.openai_api_key) if self.openai_api_key else None
         
         print(f"Initialized with provider: {self.current_provider}")
         print(f"Current model: {self.get_current_model()}")
+
+    def _make_openai_api_call(self, text_content: str, model: str) -> Optional[str]:
+        """Make API call to OpenAI for resume extraction with better error handling."""
+        if not self.openai_client:
+            logger.error("OpenAI client not initialized - check API key")
+            return None
+            
+        try:
+            full_prompt = self.extraction_prompt + text_content
+            
+            # Truncate content if too long to prevent token limit issues
+            max_tokens_for_prompt = 3000 if model == 'gpt-3.5-turbo' else 7000
+            if len(full_prompt) > max_tokens_for_prompt * 4:  # Rough character to token ratio
+                text_content = text_content[:max_tokens_for_prompt * 4 - len(self.extraction_prompt)]
+                full_prompt = self.extraction_prompt + text_content
+            
+            completion = self.openai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a professional resume parser. Always return valid JSON without any markdown formatting or extra text."
+                    },
+                    {
+                        "role": "user", 
+                        "content": full_prompt
+                    }
+                ],
+                max_tokens=2000,
+                temperature=0,  # Slightly increased for better variation
+            )
+
+            # Update usage tracking
+            self._update_api_usage('openai', model, 1)
+            return completion.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error making OpenAI API call: {str(e)}")
+            # Try with backup model if available
+            if model == 'gpt-3.5-turbo' and self._can_use_backup_model():
+                logger.info("Trying backup model gpt-4")
+                return self._make_openai_api_call(text_content, 'gpt-4')
+            return None
+
+    def _can_use_backup_model(self) -> bool:
+        """Check if backup model can be used based on usage limits."""
+        today_usage = self._get_today_usage('openai', 'gpt-4')
+        return today_usage < 50  # Lower limit for gpt-4
 
     def _load_usage_data(self) -> Dict:
         """Load API usage data from file."""
@@ -202,7 +186,7 @@ class ResumeExtractor:
             else:
                 return {}
         except Exception as e:
-            print(f"Error loading usage data: {e}")
+            logger.error(f"Error loading usage data: {e}")
             return {}
 
     def _save_usage_data(self):
@@ -211,7 +195,7 @@ class ResumeExtractor:
             with open(self.usage_file, 'w') as f:
                 json.dump(self.usage_data, f, indent=2)
         except Exception as e:
-            print(f"Error saving usage data: {e}")
+            logger.error(f"Error saving usage data: {e}")
 
     def _get_today_key(self) -> str:
         """Get today's date as a string key."""
@@ -247,142 +231,22 @@ class ResumeExtractor:
                 total += model_data.get(today, 0)
             return total
 
-    def _can_use_provider(self, provider: str, count: int = 1) -> bool:
-        """Check if a provider can be used without exceeding daily limit."""
-        # Check if current model for provider is within daily limit
-        current_model, daily_limit = self.api_providers[provider]['models'][self.current_model_index]
-        current_usage = self._get_today_usage(provider, current_model)
-        return (current_usage + count) <= daily_limit
-
     def get_current_model(self) -> str:
         """Get the current model being used."""
         provider_config = self.api_providers[self.current_provider]
         return provider_config['models'][self.current_model_index][0]
 
-    def _make_gemini_api_call(self, text_content: str, model: str) -> Optional[str]:
-        """Make API call to Gemini for resume extraction."""
-        try:
-            full_prompt = self.extraction_prompt + text_content
-            
-            # Prepare request payload for Gemini
-            url = f"{self.api_providers['gemini']['base_url']}/models/{model}:generateContent"
-            params = {'key': self.gemini_api_key}
-            
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "text": full_prompt
-                            }
-                        ]
-                    }
-                ]
-            }
-            
-            headers = {
-                'Content-Type': 'application/json'
-            }
-            
-            # Make API request
-            response = requests.post(url, params=params, headers=headers, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if 'candidates' in result and len(result['candidates']) > 0:
-                    content = result['candidates'][0]['content']
-                    if 'parts' in content and len(content['parts']) > 0:
-                        extracted_text = content['parts'][0]['text']
-                        
-                        # Update usage tracking
-                        self._update_api_usage('gemini', model, 1)
-                        
-                        return extracted_text
-                else:
-                    logger.error(f"Unexpected Gemini response format: {result}")
-                    return None
-            else:
-                logger.error(f"Gemini API call failed: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error making Gemini API call: {str(e)}")
-            return None
-
     def _make_api_call(self, text_content: str, provider: str, model: str) -> Optional[str]:
         """Make API call to extract resume data."""
-        if provider == 'gemini':
-            return self._make_gemini_api_call(text_content, model)
-        
-        try:
-            provider_config = self.api_providers[provider]
-            full_prompt = self.extraction_prompt + text_content
-            
-            # Prepare request payload
-            headers = {
-                'Authorization': f'Bearer {provider_config["api_key"]}',
-                'Content-Type': 'application/json'
-            }
-            
-            payload = {
-                'model': model,
-                'messages': [
-                    {
-                        'role': 'user',
-                        'content': full_prompt
-                    }
-                ],
-                'max_tokens': 2000,
-                'temperature': 0.1  # Lower temperature for more consistent JSON output
-            }
-            
-            # Make API request
-            url = f"{provider_config['base_url']}/chat/completions"
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                extracted_text = result['choices'][0]['message']['content']
-                
-                # Update usage tracking
-                self._update_api_usage(provider, model, 1)
-                
-                return extracted_text
-            else:
-                logger.error(f"API call failed: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error making API call to {provider}: {str(e)}")
+        if provider == 'openai':
+            return self._make_openai_api_call(text_content, model)
+        else:
+            logger.error(f"Unsupported provider: {provider}")
             return None
-
-    def _switch_to_next_model(self) -> bool:
-        """Switch to next available model or provider."""
-        # Try next model in current provider
-        provider_config = self.api_providers[self.current_provider]
-        if self.current_model_index < len(provider_config['models']) - 1:
-            self.current_model_index += 1
-            return True
-        
-        # Try switching provider based on priority: gemini -> groq -> openai
-        available_providers = []
-        if self.gemini_api_key and self.current_provider != 'gemini':
-            available_providers.append('gemini')
-        if self.groq_api_key and self.current_provider != 'groq':
-            available_providers.append('groq')
-        if self.openai_api_key and self.current_provider != 'openai':
-            available_providers.append('openai')
-        
-        if available_providers:
-            self.current_provider = available_providers[0]
-            self.current_model_index = 0
-            return True
-        
-        return False
 
     def extract_from_file(self, file_path: str, filename: str, max_retries: int = 3) -> Dict[str, Any]:
         """
-        Extract resume data from a file using multi-API approach
+        Extract resume data from a file using multi-API approach with improved error handling
         """
         try:
             # Extract text from file based on type
@@ -395,28 +259,23 @@ class ResumeExtractor:
                     "success": False
                 }
             
-            # Try multiple providers/models with fallback
+            # Check if we've hit rate limits
+            if self._check_rate_limits():
+                return {
+                    "filename": filename,
+                    "error": "Rate limit exceeded. Please try again later.",
+                    "success": False
+                }
+                
+            current_model = self.get_current_model()
+            logger.info(f"Using {self.current_provider} - {current_model} for {filename}")
+            
+            # Make API call with retries
             for attempt in range(max_retries):
-                # Check if current provider has capacity
-                if not self._can_use_provider(self.current_provider, 1):
-                    print(f"Provider {self.current_provider} would exceed daily limit. Switching...")
-                    if not self._switch_to_next_model():
-                        return {
-                            "filename": filename,
-                            "error": "All API providers have reached their daily limits.",
-                            "success": False
-                        }
-                
-                current_model = self.get_current_model()
-                print(f"Using {self.current_provider} - {current_model} (Attempt {attempt + 1})")
-                
-                # Make API call
-                rate_limiter.wait_for_slot(current_model)  # Ensure we don't exceed model-specific RPM
-                response_text = self._make_api_call(text_content, self.current_provider, current_model)
-                rate_limiter.record(current_model)  # Record the request time
-                
-                if response_text:
-                    try:
+                try:
+                    response_text = self._make_api_call(text_content, self.current_provider, current_model)
+                    
+                    if response_text:
                         # Clean the response text to extract JSON
                         json_text = self._clean_json_response(response_text)
                         extracted_data = json.loads(json_text)
@@ -427,46 +286,57 @@ class ResumeExtractor:
                         extracted_data["text_length"] = len(text_content)
                         extracted_data["provider"] = self.current_provider
                         extracted_data["model"] = current_model
+                        extracted_data["extraction_timestamp"] = datetime.now().isoformat()
                         
                         # Post-process and validate data
                         extracted_data = self._post_process_data(extracted_data)
                         
                         return extracted_data
                         
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error on attempt {attempt + 1}: {str(e)}")
-                        if attempt < max_retries - 1:
-                            # Try next model/provider
-                            if not self._switch_to_next_model():
-                                break
-                        else:
-                            return {
-                                "filename": filename,
-                                "error": f"Failed to parse AI response as JSON: {str(e)}",
-                                "raw_response": response_text[:500],
-                                "success": False
-                            }
-                else:
-                    # Try next model/provider
-                    if attempt < max_retries - 1:
-                        if not self._switch_to_next_model():
-                            break
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error on attempt {attempt + 1}: {str(e)}")
+                    if attempt == max_retries - 1:
+                        return {
+                            "filename": filename,
+                            "error": f"Failed to parse AI response as JSON after {max_retries} attempts: {str(e)}",
+                            "raw_response": response_text[:500] if response_text else "No response",
+                            "success": False
+                        }
+                    # Wait before retry
+                    time.sleep(1 * (attempt + 1))
+                    
+                except Exception as e:
+                    logger.error(f"Error on attempt {attempt + 1}: {str(e)}")
+                    if attempt == max_retries - 1:
+                        return {
+                            "filename": filename,
+                            "error": f"Failed to extract resume data after {max_retries} attempts: {str(e)}",
+                            "success": False
+                        }
+                    time.sleep(1 * (attempt + 1))
             
             return {
                 "filename": filename,
-                "error": "Failed to extract resume data after multiple attempts.",
+                "error": f"Failed to extract resume data after {max_retries} attempts.",
                 "success": False
             }
                 
         except Exception as e:
+            logger.error(f"Error processing file {filename}: {str(e)}")
             return {
                 "filename": filename,
                 "error": f"Error processing file: {str(e)}",
                 "success": False
             }
 
+    def _check_rate_limits(self) -> bool:
+        """Check if we've exceeded rate limits."""
+        today_usage = self._get_today_usage(self.current_provider)
+        daily_limit = self.daily_limits.get(self.current_provider, 1000)
+        return today_usage >= daily_limit
+
     def _extract_text_from_file(self, file_path: str) -> str:
-        """Extract text content from various file formats"""
+        """Extract text content from various file formats with better error handling"""
         file_extension = os.path.splitext(file_path)[1].lower()
         
         try:
@@ -482,134 +352,198 @@ class ResumeExtractor:
                 raise ValueError(f"Unsupported file type: {file_extension}")
                 
         except Exception as e:
+            logger.error(f"Error extracting text from {file_extension} file: {str(e)}")
             raise Exception(f"Error extracting text from {file_extension} file: {str(e)}")
 
     def _extract_from_pdf(self, file_path: str) -> str:
-        """Extract text from PDF file"""
+        """Extract text from PDF file with better error handling"""
         text = ""
         try:
             with open(file_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    except Exception as e:
+                        logger.warning(f"Error extracting text from page {page_num}: {e}")
+                        continue
+                        
         except Exception as e:
             raise Exception(f"Error reading PDF: {str(e)}")
         
-        return text
+        return text.strip()
 
     def _extract_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file"""
+        """Extract text from DOCX file with better error handling"""
+        text = ""
         try:
             doc = docx.Document(file_path)
-            text = ""
-            for paragraph in doc.paragraphs:
-                text += paragraph.text + "\n"
             
-            # Also extract text from tables
+            # Extract text from paragraphs
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text += paragraph.text + "\n"
+            
+            # Extract text from tables
             for table in doc.tables:
                 for row in table.rows:
+                    row_text = []
                     for cell in row.cells:
-                        text += cell.text + " "
-                    text += "\n"
-                    
+                        if cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        text += " | ".join(row_text) + "\n"
+                        
         except Exception as e:
             raise Exception(f"Error reading DOCX: {str(e)}")
         
-        return text
+        return text.strip()
 
     def _extract_from_excel(self, file_path: str) -> str:
-        """Extract text from Excel file"""
+        """Extract text from Excel file with better error handling"""
+        text = ""
         try:
             # Read all sheets
             excel_file = pd.ExcelFile(file_path)
-            text = ""
             
             for sheet_name in excel_file.sheet_names:
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
-                # Convert dataframe to string, handling NaN values
-                sheet_text = df.fillna('').to_string(index=False)
-                text += f"Sheet: {sheet_name}\n{sheet_text}\n\n"
-                
+                try:
+                    df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    # Convert dataframe to string, handling NaN values
+                    sheet_text = df.fillna('').to_string(index=False)
+                    text += f"Sheet: {sheet_name}\n{sheet_text}\n\n"
+                except Exception as e:
+                    logger.warning(f"Error reading sheet {sheet_name}: {e}")
+                    continue
+                    
         except Exception as e:
             raise Exception(f"Error reading Excel: {str(e)}")
         
-        return text
+        return text.strip()
 
     def _extract_from_txt(self, file_path: str) -> str:
-        """Extract text from TXT file"""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                text = file.read()
-        except UnicodeDecodeError:
-            # Try with different encoding
-            try:
-                with open(file_path, 'r', encoding='latin-1') as file:
-                    text = file.read()
-            except Exception as e:
-                raise Exception(f"Error reading TXT file with different encodings: {str(e)}")
-        except Exception as e:
-            raise Exception(f"Error reading TXT: {str(e)}")
+        """Extract text from TXT file with better encoding handling"""
+        text = ""
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
         
-        return text
+        for encoding in encodings:
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    text = file.read()
+                break
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        
+        if not text:
+            raise Exception("Could not read TXT file with any supported encoding")
+        
+        return text.strip()
 
     def _clean_json_response(self, response_text: str) -> str:
-        """Clean the AI response to extract valid JSON"""
+        """Clean the AI response to extract valid JSON with better regex"""
+        if not response_text:
+            return "{}"
+            
         # Remove markdown code blocks if present
-        response_text = re.sub(r'```json\s*', '', response_text)
-        response_text = re.sub(r'```\s*$', '', response_text)
+        response_text = re.sub(r'```json\s*', '', response_text, flags=re.IGNORECASE)
+        response_text = re.sub(r'```\s*$', '', response_text, flags=re.MULTILINE)
         
-        # Find JSON content between curly braces
+        # Remove any leading/trailing whitespace
+        response_text = response_text.strip()
+        
+        # Find JSON content between curly braces (improved regex)
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
-            return json_match.group(0)
+            json_text = json_match.group(0)
+            # Basic validation - ensure it starts and ends with braces
+            if json_text.startswith('{') and json_text.endswith('}'):
+                return json_text
         
+        # If no valid JSON found, return the original text
         return response_text
 
     def _post_process_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Post-process and validate extracted data"""
+        """Post-process and validate extracted data with enhanced cleaning"""
+        # Ensure all required keys exist
+        required_keys = ["personal_info", "skills", "experience", "education", "certifications", "projects", "languages", "awards"]
+        for key in required_keys:
+            if key not in data or data[key] is None:
+                if key == "personal_info":
+                    data[key] = {}
+                else:
+                    data[key] = []
+        
         # Clean up personal info
         if "personal_info" in data and data["personal_info"]:
             personal_info = data["personal_info"]
             
-            # Clean email
+            # Clean email with improved regex
             if "email" in personal_info and personal_info["email"]:
                 email = personal_info["email"]
-                # Extract email using regex if it's embedded in text
                 email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', email)
                 if email_match:
-                    personal_info["email"] = email_match.group(0)
+                    personal_info["email"] = email_match.group(0).lower()
             
-            # Clean phone number
+            # Clean phone number with improved regex
             if "phone" in personal_info and personal_info["phone"]:
                 phone = personal_info["phone"]
-                # Improved regex for international phone numbers
+                # Enhanced phone number extraction
                 phone_match = re.search(
-                    r'(\+?\d{1,3}[\s\-]?)?(\(?\d{2,4}\)?[\s\-]?)?(\d{3,4}[\s\-]?\d{3,4}[\s\-]?\d{0,4})',
+                    r'(\+?\d{1,3}[\s\-\.]?)?(\(?\d{2,4}\)?[\s\-\.]?)?(\d{3,4}[\s\-\.]?\d{3,4}[\s\-\.]?\d{0,4})',
                     phone
                 )
                 if phone_match:
-                    # Remove extra spaces/dashes and join groups
+                    # Clean and format phone number
                     extracted = ''.join(filter(None, phone_match.groups()))
-                    # Clean up: remove double spaces/dashes, keep only numbers, +, -, ()
                     cleaned = re.sub(r'[^\d\+\-\(\)]', '', extracted)
                     personal_info["phone"] = cleaned
+            
+            # Clean LinkedIn URL
+            if "linkedin" in personal_info and personal_info["linkedin"]:
+                linkedin = personal_info["linkedin"]
+                if "linkedin.com" in linkedin.lower():
+                    personal_info["linkedin"] = linkedin
+                elif linkedin.startswith("linkedin.com") or linkedin.startswith("www.linkedin.com"):
+                    personal_info["linkedin"] = "https://" + linkedin
+                else:
+                    # Try to extract LinkedIn username
+                    linkedin_match = re.search(r'linkedin\.com/in/([^/\s]+)', linkedin)
+                    if linkedin_match:
+                        personal_info["linkedin"] = f"https://linkedin.com/in/{linkedin_match.group(1)}"
         
         # Clean up skills - remove duplicates and empty strings
         if "skills" in data and isinstance(data["skills"], list):
             skills = []
+            seen_skills = set()
             for skill in data["skills"]:
-                if skill and skill.strip() and skill.strip() not in skills:
-                    skills.append(skill.strip().title())  # Normalize case
+                if skill and skill.strip():
+                    skill_cleaned = skill.strip().title()
+                    if skill_cleaned.lower() not in seen_skills:
+                        skills.append(skill_cleaned)
+                        seen_skills.add(skill_cleaned.lower())
             data["skills"] = skills
         
-        # Ensure arrays exist even if empty
-        for key in ["skills", "experience", "education", "certifications", "projects", "languages", "awards"]:
-            if key not in data or data[key] is None:
-                data[key] = []
+        # Clean up experience descriptions
+        if "experience" in data and isinstance(data["experience"], list):
+            for exp in data["experience"]:
+                if isinstance(exp, dict) and "description" in exp:
+                    if isinstance(exp["description"], str):
+                        # Convert string to list if needed
+                        exp["description"] = [exp["description"]]
+                    elif isinstance(exp["description"], list):
+                        # Clean up list items
+                        exp["description"] = [desc.strip() for desc in exp["description"] if desc and desc.strip()]
         
-        # Ensure personal_info exists
-        if "personal_info" not in data or data["personal_info"] is None:
-            data["personal_info"] = {}
+        # Add summary if missing but experience exists
+        if not data.get("summary") and data.get("experience"):
+            try:
+                first_exp = data["experience"][0]
+                if isinstance(first_exp, dict) and first_exp.get("title"):
+                    data["summary"] = f"Professional with experience as {first_exp['title']}"
+            except (IndexError, KeyError):
+                pass
         
         return data
 
@@ -634,7 +568,8 @@ class ResumeExtractor:
             provider_summary['models'] = {}
             
             # Model-specific usage
-            for model in config['models']:
+            for model_info in config['models']:
+                model = model_info[0]
                 model_usage = self._get_today_usage(provider, model)
                 provider_summary['models'][model] = {
                     'usage': model_usage,
@@ -645,116 +580,63 @@ class ResumeExtractor:
         
         return summary
 
-    def switch_provider(self, provider: str, model_index: int = 0) -> bool:
-        """Manually switch to a specific provider and model."""
-        if provider in self.api_providers and self.api_providers[provider]['api_key']:
-            self.current_provider = provider
-            self.current_model_index = min(model_index, len(self.api_providers[provider]['models']) - 1)
-            print(f"Switched to {provider} - {self.get_current_model()}")
-            return True
-        else:
-            print(f"Provider {provider} not available or API key not set")
-            return False
-
-    def list_available_providers(self) -> Dict:
-        """List all available providers and their models."""
-        available = {}
-        for provider, config in self.api_providers.items():
-            if config['api_key']:
-                available[provider] = {
-                    'models': config['models'],
-                    'status': 'Available' if self._can_use_provider(provider) else 'Daily limit reached'
-                }
-        return available
-
     def extract_batch(self, file_paths: List[str], output_file: str = None) -> List[Dict[str, Any]]:
-        """Extract data from multiple resume files"""
+        """Extract data from multiple resume files with better progress tracking"""
         results = []
+        total_files = len(file_paths)
         
         for i, file_path in enumerate(file_paths):
             filename = os.path.basename(file_path)
-            print(f"\nProcessing {i+1}/{len(file_paths)}: {filename}")
+            logger.info(f"Processing {i+1}/{total_files}: {filename}")
             
             result = self.extract_from_file(file_path, filename)
             results.append(result)
             
             # Show progress
             if result["success"]:
-                print(f"✓ Successfully extracted data from {filename}")
+                logger.info(f"✓ Successfully extracted data from {filename}")
                 if "personal_info" in result and result["personal_info"].get("name"):
-                    print(f"  Candidate: {result['personal_info']['name']}")
+                    logger.info(f"  Candidate: {result['personal_info']['name']}")
             else:
-                print(f"✗ Failed to extract data from {filename}: {result.get('error', 'Unknown error')}")
+                logger.warning(f"✗ Failed to extract data from {filename}: {result.get('error', 'Unknown error')}")
             
-            # Small delay to avoid rate limiting
-            time.sleep(0.5)
+            # Small delay to avoid overwhelming the API
+            time.sleep(0.1)
         
         # Save results if output file specified
         if output_file:
             try:
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
-                print(f"\nResults saved to: {output_file}")
+                logger.info(f"Results saved to: {output_file}")
             except Exception as e:
-                print(f"Error saving results: {e}")
+                logger.error(f"Error saving results: {e}")
         
         # Print summary
         successful = sum(1 for r in results if r["success"])
-        print(f"\nBatch processing complete: {successful}/{len(file_paths)} files processed successfully")
+        logger.info(f"Batch processing complete: {successful}/{total_files} files processed successfully")
         
         return results
 
-
-# Example usage
-if __name__ == "__main__":
-    try:
-        extractor = ResumeExtractor()
+    async def extract_batch_async(self, file_paths: List[str], progress_callback=None) -> List[Dict[str, Any]]:
+        """Async version of batch extraction for better integration with FastAPI"""
+        results = []
+        total_files = len(file_paths)
         
-        # Show available providers
-        print("Available Providers:")
-        providers = extractor.list_available_providers()
-        for provider, info in providers.items():
-            print(f"\n{provider.upper()}:")
-            print(f"  Status: {info['status']}")
-            print(f"  Models: {', '.join(info['models'])}")
-        
-        print("\n" + "="*50 + "\n")
-        
-        # Show usage summary
-        print("Usage Summary:")
-        usage = extractor.get_usage_summary()
-        for provider, stats in usage.items():
-            print(f"\n{provider.upper()}:")
-            print(f"  Total Usage: {stats['total_usage']}/{stats['daily_limit']} ({stats['usage_percentage']:.1f}%)")
-            print(f"  Status: {stats['status']}")
-        
-        print("\n" + "="*50 + "\n")
-        
-        # Test with a single resume file
-        test_resume_path = "path_to_your_resume.pdf"  # Replace with actual resume file path
-        
-        if os.path.exists(test_resume_path):
-            print("Extracting resume data...")
-            result = extractor.extract_from_file(test_resume_path, os.path.basename(test_resume_path))
+        for i, file_path in enumerate(file_paths):
+            filename = os.path.basename(file_path)
             
-            if result["success"]:
-                print(f"Provider used: {result.get('provider', 'Unknown')}")
-                print(f"Model used: {result.get('model', 'Unknown')}")
-                print("\nExtracted Resume Data:")
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-            else:
-                print(f"Error: {result.get('error', 'Unknown error')}")
-        else:
-            print(f"Test resume not found: {test_resume_path}")
-            print("Please update the test_resume_path variable with a valid resume file path.")
+            # Run extraction in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self.extract_from_file, file_path, filename)
+            results.append(result)
             
-        # Example of batch processing
-        # resume_files = ["resume1.pdf", "resume2.docx", "resume3.txt"]
-        # results = extractor.extract_batch(resume_files, "extracted_resumes.json")
+            # Call progress callback if provided
+            if progress_callback:
+                progress = int((i + 1) * 100 / total_files)
+                await progress_callback(progress)
             
-    except Exception as e:
-        print(f"Error initializing extractor: {str(e)}")
-        print("Make sure to set at least one API key in your .env file:")
-        print("- GEMINI_API_KEY")
-        print("- GROQ_API_KEY")
-        print("- OPENAI_API_KEY")
+            # Small delay to avoid overwhelming the API
+            await asyncio.sleep(0.1)
+        
+        return results
