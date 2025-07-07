@@ -53,77 +53,91 @@ class ResumeExtractor:
 
         # Define extraction prompt with better JSON structure
         self.extraction_prompt = """
-You are an expert resume parser. Extract relevant information from the resume below and return it in **valid JSON** with the following structure:
+        You are an expert resume parser. Extract the following information from the resume text provided.
+        Return the data in JSON format with the exact structure shown below:
 
-{
-  "personal_info": {
-    "name": "",
-    "email": "",
-    "phone": "",
-    "location": "",
-    "linkedin": "",
-    "portfolio": ""
-  },
-  "summary": "",
-  "skills": [],
-  "experience": [
-    {
-      "title": "",
-      "company": "",
-      "location": "",
-      "duration": "",
-      "description": []
-    }
-  ],
-  "education": [
-    {
-      "degree": "",
-      "institution": "",
-      "location": "",
-      "year": "",
-      "gpa": ""
-    }
-  ],
-  "certifications": [
-    {
-      "name": "",
-      "issuer": "",
-      "date": "",
-      "expiry": ""
-    }
-  ],
-  "projects": [
-    {
-      "name": "",
-      "description": "",
-      "technologies": [],
-      "duration": ""
-    }
-  ],
-  "languages": [
-    {
-      "language": "",
-      "proficiency": ""
-    }
-  ],
-  "awards": []
-}
+        {
+        "personal_info": {
+            "name": "Full name of the candidate",
+            "email": "Email address",
+            "phone": "Full phone number including country code if available",
+            "location": "City, State/Country",
+            "linkedin": "LinkedIn profile URL",
+            "portfolio": "Portfolio/website URL"
+        },
+        "summary": "Professional summary or objective statement",
+        "skills": [
+            "List of technical and soft skills"
+        ],
+        "experience": [
+            {
+            "title": "Job title",
+            "company": "Company name",
+            "location": "Job location",
+            "duration": "Start date - End date",
+            "description": "Job description and achievements"
+            }
+        ],
+        "education": [
+            {
+            "degree": "Degree name",
+            "institution": "Institution name",
+            "location": "Institution location",
+            "year": "Graduation year or duration",
+            "gpa": "GPA if mentioned"
+            }
+        ],
+        "certifications": [
+            {
+            "name": "Certification name",
+            "issuer": "Issuing organization",
+            "date": "Date obtained",
+            "expiry": "Expiry date if any"
+            }
+        ],
+        "projects": [
+            {
+            "name": "Project name",
+            "description": "Project description",
+            "technologies": ["Technologies used"],
+            "duration": "Project duration"
+            }
+        ],
+        "languages": [
+            {
+            "language": "Language name",
+            "proficiency": "Proficiency level"
+            }
+        ],
+        "awards": [
+            "List of awards and achievements"
+        ]
+        }
 
-**Rules:**
-- Extract only data present in the resume
-- Use empty strings for missing values
-- Include full phone number with country code
-- Add country code only if present in resume
-- Normalize dates (MM/YYYY or YYYY format)
-- Clean extra whitespace
-- Extract both technical and soft skills
-- Include partial email or phone if incomplete
-- For experience description, use array of bullet points
-- Return only the JSON object — no extra text or markdown
+
+**Extraction Rules:**
+- Extract all entries in each category (multiple jobs, degrees, projects, etc.).
+- Use empty strings or empty arrays for missing or not found values.
+- Include only the first email and phone number found, even if multiple exist.
+- Include country code in phone numbers if present.
+- Include all skill types: technical, soft, tools, platforms, and domain-specific.
+- Preserve bullet points in description fields where applicable.
+- Accept ALL-CAPS or spaced section headers (e.g., “P R O J E C T S”) as valid dividers.
+- For sections titled "Projects", "Academic Projects", etc.:
+- Parse only into the projects array, not experience.
+- For the experience array, only include an entry if:
+- It names a company or organization, and
+- It includes a job title (e.g., Intern, Analyst, Developer).
+- Under certifications, parse lines like X - Y as:
+- name = X, issuer = Y
+- Under experience, parse lines like X - Y as:
+- title = X, company = Y
+- If “Fresher” is mentioned or there’s no employment history:
+- Keep the experience array empty.
+- Use contextual cues (e.g., “developed”, “collaborated”, “built”) to recognize project entries.
 
 Resume text:
 """
-        
         # Initialize OpenAI client
         self.openai_client = OpenAI(api_key=self.openai_api_key) if self.openai_api_key else None
         
@@ -158,7 +172,7 @@ Resume text:
                     }
                 ],
                 max_tokens=2000,
-                temperature=0.1,  # Slightly increased for better variation
+                temperature=0,  # Slightly increased for better variation
             )
 
             # Update usage tracking
