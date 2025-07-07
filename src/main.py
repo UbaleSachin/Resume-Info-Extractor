@@ -35,7 +35,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 load_dotenv()
 
-DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/yourdbname"  # Replace with your actual database URL
+"""DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/yourdbname"  # Replace with your actual database URL
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
@@ -46,9 +46,7 @@ Base = declarative_base()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# Initialize extractors
-resume_extractor = ResumeExtractor()
-candidate_fit_evaluator = CandidateFitEvaluator()
+
 
 class User(Base):
     __tablename__ = "users"
@@ -58,7 +56,7 @@ class User(Base):
 
 async def create_db():
     async with engine.begin() as cnn:
-        await cnn.run_sync(Base.metadata.create_all)
+        await cnn.run_sync(Base.metadata.create_all)"""
 
 class UserIn(BaseModel):
     username: str
@@ -212,6 +210,9 @@ class ProcessingQueue:
             job_storage.update_job(job_id, 'failed', {'error': str(e)})
         finally:
             self.active_jobs -= 1
+# Initialize extractors
+resume_extractor = ResumeExtractor()
+candidate_fit_evaluator = CandidateFitEvaluator()
 
 # Global instances
 rate_limiter = RateLimiter(max_requests=200, time_window=60) # updated from 50 to 200 max rpm is 500 for gpt-3.5-turbo
@@ -391,7 +392,7 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
 
-@app.on_event("startup")
+"""@app.on_event("startup")
 async def startup():
     await create_db()
 
@@ -408,7 +409,7 @@ async def get_user(session, username: str):
     return result.scalar_one_or_none()
 
 async def get_user_by_id(session, user_id: int):
-    """Get user by ID - returns User object or None"""
+    #""Get user by ID - returns User object or None
     return await session.get(User, user_id)
 
 def create_access_token(data: dict):
@@ -455,7 +456,7 @@ async def login(form_data: UserIn):
         if not user or not verify_password(form_data.password, user.hashed_password):
             raise HTTPException(status_code=400, detail="Incorrect username or password")
         access_token = create_access_token(data={"sub": user.username})
-        return {"access_token": access_token, "token_type": "bearer"}
+        return {"access_token": access_token, "token_type": "bearer"}"""
 
 @app.get("/")
 async def root():
@@ -706,7 +707,7 @@ async def download_fit_excel(data: dict):
         headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
     )
 
-@app.post("/save-extracted-data")
+"""@app.post("/save-extracted-data")
 async def save_extracted_data(data: dict, user=Depends(get_current_user)):
     # Save data to a table with user_id reference (implement your own model)
     # Example: ResumeData(user_id=user.id, data=json.dumps(data))
@@ -715,7 +716,7 @@ async def save_extracted_data(data: dict, user=Depends(get_current_user)):
 @app.get("/get-extracted-data")
 async def get_extracted_data(user=Depends(get_current_user)):
     # Query your ResumeData table for user_id=user.id
-    return {"msg": "Fetched data for user", "user": user.username}
+    return {"msg": "Fetched data for user", "user": user.username}"""
 
 @app.get("/system/health")
 async def health_check():
