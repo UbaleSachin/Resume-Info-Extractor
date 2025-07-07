@@ -112,7 +112,8 @@ You are an expert resume parser. Extract relevant information from the resume be
 **Rules:**
 - Extract only data present in the resume
 - Use empty strings for missing values
-- Include full phone number with country code (e.g., +1, +91) if present
+- Include full phone number with country code
+- Add country code only if present in resume
 - Normalize dates (MM/YYYY or YYYY format)
 - Clean extra whitespace
 - Extract both technical and soft skills
@@ -157,7 +158,7 @@ Resume text:
                     }
                 ],
                 max_tokens=2000,
-                temperature=0,  # Slightly increased for better variation
+                temperature=0.1,  # Slightly increased for better variation
             )
 
             # Update usage tracking

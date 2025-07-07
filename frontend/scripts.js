@@ -472,6 +472,7 @@ class ResumeExtractor {
                             <th>Skills</th>
                             <th>Education</th>
                             <th>Experience</th>
+                            <th>Summary</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -489,6 +490,7 @@ class ResumeExtractor {
                 const experience = Array.isArray(resume.experience)
                     ? resume.experience.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.experience || '');
+                const summary = resume.summary || "";
 
                 tableHtml += `
                     <tr>
@@ -501,6 +503,7 @@ class ResumeExtractor {
                         <td>${skills}</td>
                         <td>${education}</td>
                         <td>${experience}</td>
+                        <td>${summary}</td>
                     </tr>
                 `;
             });

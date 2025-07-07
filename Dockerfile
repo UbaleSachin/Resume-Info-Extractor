@@ -8,10 +8,10 @@ ENV PYTHONUNBUFFERED=1
 # Set work directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including Redis
 RUN apt-get update && \
     apt-get install -y build-essential libpoppler-cpp-dev pkg-config python3-dev \
-    poppler-utils libreoffice && \
+    poppler-utils libreoffice redis-server supervisor && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy requirements (if you have requirements.txt)
@@ -23,8 +23,12 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy project files
 COPY . .
 
+# Create supervisor configuration
+RUN mkdir -p /var/log/supervisor
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
 # Expose FastAPI port
 EXPOSE 8000
 
-# Start FastAPI app with uvicorn
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start both Redis and FastAPI using supervisor
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

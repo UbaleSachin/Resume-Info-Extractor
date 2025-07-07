@@ -111,7 +111,14 @@ class RateLimiter:
 # Redis-based job storage
 class JobStorage:
     def __init__(self):
-        self.redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        redis_pool = redis.ConnectionPool(
+        host='localhost', 
+        port=6379, 
+        db=0, 
+        max_connections=20,
+        decode_responses=True
+)
+        self.redis_client = redis.Redis(connection_pool=redis_pool)
         self._update_cache = {}
         self._last_update = {}
     
@@ -839,7 +846,7 @@ def create_excel_response(data):
                             for edu in resume.get("education", []) if isinstance(edu, dict)
                         ) if isinstance(resume.get("education", []), list) else "",
                         "Designation": resume.get("experience", [{}])[0].get("title", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
-                        "Description": resume.get("experience", [{}])[0].get("description", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
+                        "summary": resume.get("summary", ""),
                     }
                     summary_data.append(summary_row)
             
