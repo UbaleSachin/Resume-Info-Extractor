@@ -33,7 +33,7 @@ class ResumeExtractor:
         # Available API providers and models
         self.api_providers = {
             'openai': {
-                'models': [('gpt-3.5-turbo', 4000)],  # Added gpt-4 as backup
+                'models': [('gpt-4.1', 4000)],  # Added gpt-4 as backup
                 'api_key': self.openai_api_key,
             }
         }
@@ -57,62 +57,63 @@ class ResumeExtractor:
         Return the data in JSON format with the exact structure shown below:
 
         {
-        "personal_info": {
-            "name": "Full name of the candidate",
-            "email": "Email address",
-            "phone": "Full phone number including country code if available",
-            "location": "City, State/Country",
-            "linkedin": "LinkedIn profile URL",
-            "portfolio": "Portfolio/website URL"
-        },
-        "summary": "Professional summary or objective statement",
-        "skills": [
-            "List of technical and soft skills"
-        ],
-        "experience": [
-            {
-            "title": "Job title",
-            "company": "Company name",
-            "location": "Job location",
-            "duration": "Start date - End date",
-            "description": "Job description and achievements"
+            "personal_info": {
+                "name": "Full name of the candidate",
+                "email": "Email address",
+                "phone": "Full phone number including country code if available",
+                "location": "City, State/Country",
+                "linkedin": "LinkedIn profile URL",
+                "portfolio": "Portfolio/website URL"
+            },
+            "summary": "Professional summary or objective statement",
+            "skills": [
+                "List of technical and soft skills"
+            ],
+            "experience": [
+                {
+                "title": "Job title",
+                "company": "Company name",
+                "location": "Job location",
+                "duration": "Start date - End date",
+                }
+            ],
+            "total_experience": "Calculate the total work experience from a list of non-overlapping date ranges. Treat 'Present' as the current date. Do not round or merge separate time periods. Count each month precisely, and sum them exactly. Output the total duration in years and months, e.g., '11 months' or '2 years 3 months'.",
+            "education": [
+                {
+                "degree": "Degree name",
+                "institution": "Institution name",
+                "location": "Institution location",
+                "year": "Graduation year or duration",
+                "gpa": "GPA if mentioned"
+                }
+            ],
+            "certifications": [
+                {
+                "name": "Certification name",
+                "issuer": "Issuing organization",
+                "date": "Date obtained",
+                "expiry": "Expiry date if any"
+                }
+            ],
+            "projects": [
+                {
+                "name": "Project name",
+                "description": "Project description",
+                "technologies": ["Technologies used"],
+                "duration": "Project duration"
+                }
+            ],
+            "languages": [
+                {
+                "language": "Language name",
+                "proficiency": "Proficiency level"
+                }
+            ],
+            "awards": [
+                "List of awards and achievements"
+            ]
             }
-        ],
-        "education": [
-            {
-            "degree": "Degree name",
-            "institution": "Institution name",
-            "location": "Institution location",
-            "year": "Graduation year or duration",
-            "gpa": "GPA if mentioned"
-            }
-        ],
-        "certifications": [
-            {
-            "name": "Certification name",
-            "issuer": "Issuing organization",
-            "date": "Date obtained",
-            "expiry": "Expiry date if any"
-            }
-        ],
-        "projects": [
-            {
-            "name": "Project name",
-            "description": "Project description",
-            "technologies": ["Technologies used"],
-            "duration": "Project duration"
-            }
-        ],
-        "languages": [
-            {
-            "language": "Language name",
-            "proficiency": "Proficiency level"
-            }
-        ],
-        "awards": [
-            "List of awards and achievements"
-        ]
-        }
+
 
 
 **Extraction Rules:**
@@ -120,7 +121,8 @@ class ResumeExtractor:
 - Use empty strings or empty arrays for missing or not found values.
 - Include only the first email and phone number found, even if multiple exist.
 - Include country code in phone numbers if present.
-- Include all skill types: technical, soft, tools, platforms, and domain-specific.
+- Include all skill types: Technical, Soft, Tools, Platforms, and Domain-Specific.
+- Only include skill from skill section not from other section.
 - Preserve bullet points in description fields where applicable.
 - Accept ALL-CAPS or spaced section headers (e.g., “P R O J E C T S”) as valid dividers.
 - For sections titled "Projects", "Academic Projects", etc.:
@@ -128,8 +130,6 @@ class ResumeExtractor:
 - For the experience array, only include an entry if:
 - It names a company or organization, and
 - It includes a job title (e.g., Intern, Analyst, Developer).
-- Under certifications, parse lines like X - Y as:
-- name = X, issuer = Y
 - Under experience, parse lines like X - Y as:
 - title = X, company = Y
 - If “Fresher” is mentioned or there’s no employment history:
@@ -145,7 +145,7 @@ Resume text:
         print(f"Current model: {self.get_current_model()}")
 
     def _make_openai_api_call(self, text_content: str, model: str) -> Optional[str]:
-        """Make API call to OpenAI for resume extraction with better error handling."""
+        """Make API call to OpenAI with improved system prompt"""
         if not self.openai_client:
             logger.error("OpenAI client not initialized - check API key")
             return None
@@ -153,9 +153,9 @@ Resume text:
         try:
             full_prompt = self.extraction_prompt + text_content
             
-            # Truncate content if too long to prevent token limit issues
+            # Truncate if too long
             max_tokens_for_prompt = 3000 if model == 'gpt-3.5-turbo' else 7000
-            if len(full_prompt) > max_tokens_for_prompt * 4:  # Rough character to token ratio
+            if len(full_prompt) > max_tokens_for_prompt * 4:
                 text_content = text_content[:max_tokens_for_prompt * 4 - len(self.extraction_prompt)]
                 full_prompt = self.extraction_prompt + text_content
             
@@ -164,7 +164,14 @@ Resume text:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a professional resume parser. Always return valid JSON without any markdown formatting or extra text."
+                        "content": """You are a precise resume parser. Your job is to extract information EXACTLY as written in the resume without any modifications, cleaning, or truncation. 
+
+                        CRITICAL RULES:
+                        - Extract complete information - never truncate names, emails, or any other fields
+                        - If a section is not present, return empty string or empty array
+                        - Extract only from relevant sections - don't mix information from different sections
+                        - Return only valid JSON without any markdown formatting
+                        - Do not infer or generate information not explicitly stated"""
                     },
                     {
                         "role": "user", 
@@ -172,7 +179,7 @@ Resume text:
                     }
                 ],
                 max_tokens=2000,
-                temperature=0,  # Slightly increased for better variation
+                temperature=0,  # Keep deterministic
             )
 
             # Update usage tracking
@@ -181,10 +188,6 @@ Resume text:
             
         except Exception as e:
             logger.error(f"Error making OpenAI API call: {str(e)}")
-            # Try with backup model if available
-            if model == 'gpt-3.5-turbo' and self._can_use_backup_model():
-                logger.info("Trying backup model gpt-4")
-                return self._make_openai_api_call(text_content, 'gpt-4')
             return None
 
     def _can_use_backup_model(self) -> bool:
@@ -493,28 +496,7 @@ Resume text:
         # Clean up personal info
         if "personal_info" in data and data["personal_info"]:
             personal_info = data["personal_info"]
-            
-            # Clean email with improved regex
-            if "email" in personal_info and personal_info["email"]:
-                email = personal_info["email"]
-                email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', email)
-                if email_match:
-                    personal_info["email"] = email_match.group(0).lower()
-            
-            # Clean phone number with improved regex
-            if "phone" in personal_info and personal_info["phone"]:
-                phone = personal_info["phone"]
-                # Enhanced phone number extraction
-                phone_match = re.search(
-                    r'(\+?\d{1,3}[\s\-\.]?)?(\(?\d{2,4}\)?[\s\-\.]?)?(\d{3,4}[\s\-\.]?\d{3,4}[\s\-\.]?\d{0,4})',
-                    phone
-                )
-                if phone_match:
-                    # Clean and format phone number
-                    extracted = ''.join(filter(None, phone_match.groups()))
-                    cleaned = re.sub(r'[^\d\+\-\(\)]', '', extracted)
-                    personal_info["phone"] = cleaned
-            
+
             # Clean LinkedIn URL
             if "linkedin" in personal_info and personal_info["linkedin"]:
                 linkedin = personal_info["linkedin"]
@@ -551,14 +533,7 @@ Resume text:
                         # Clean up list items
                         exp["description"] = [desc.strip() for desc in exp["description"] if desc and desc.strip()]
         
-        # Add summary if missing but experience exists
-        if not data.get("summary") and data.get("experience"):
-            try:
-                first_exp = data["experience"][0]
-                if isinstance(first_exp, dict) and first_exp.get("title"):
-                    data["summary"] = f"Professional with experience as {first_exp['title']}"
-            except (IndexError, KeyError):
-                pass
+        
         
         return data
 

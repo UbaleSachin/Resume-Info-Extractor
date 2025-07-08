@@ -838,16 +838,17 @@ def create_excel_response(data):
                         "Email": resume.get("personal_info", {}).get("email", ""),
                         "Phone": resume.get("personal_info", {}).get("phone", ""),
                         "Skills": ", ".join(resume.get("skills", [])) if isinstance(resume.get("skills"), list) else str(resume.get("skills", "")),
-                        "Experience": "; ".join(
-                            f"{exp.get('title', '')} at {exp.get('company', '')}" 
-                            for exp in resume.get("experience", []) if isinstance(exp, dict)
-                        ) if isinstance(resume.get("experience", []), list) else "",
-                        "Education": "; ".join(
-                            f"{edu.get('degree', '')} from {edu.get('institution', '')}" 
-                            for edu in resume.get("education", []) if isinstance(edu, dict)
-                        ) if isinstance(resume.get("education", []), list) else "",
+                        "Experience": "; ".join([
+                            f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('location', '')}) - {exp.get('duration', '')}"
+                            for exp in resume.get("experience", [])
+                        ]),
+                        "Education": "; ".join([
+                            f"{edu.get('degree', '')} from {edu.get('institution', '')}"
+                            for edu in resume.get("education", [])
+                        ]),
                         "Designation": resume.get("experience", [{}])[0].get("title", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
-                        "summary": resume.get("summary", ""),
+                        "Summary": resume.get("summary", ""),
+                        "Total Exeprience": resume.get("total_experience", ""),
                     }
                     summary_data.append(summary_row)
             
