@@ -35,6 +35,29 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 load_dotenv()
 
+"""DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/yourdbname"  # Replace with your actual database URL
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
+
+engine = create_async_engine(DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(64), unique=True, index=True)
+    hashed_password = Column(String(128))
+
+async def create_db():
+    async with engine.begin() as cnn:
+        await cnn.run_sync(Base.metadata.create_all)"""
+
 class UserIn(BaseModel):
     username: str
     password: str
@@ -56,7 +79,7 @@ app.add_middleware(
 
 # Rate limiter for OpenAI API
 class RateLimiter:
-    def __init__(self, max_requests=450, time_window=60, max_tokens_per_minute=180000):  # Conservative limits
+    def __init__(self, max_requests=450, time_window=60, max_tokens_per_minute=200000):  # Conservative limits
         self.max_requests = max_requests
         self.time_window = time_window
         self.max_tokens_per_minute = max_tokens_per_minute
@@ -157,7 +180,7 @@ class JobStorage:
 
 # Updated ProcessingQueue with lower concurrency for GPT-4.1
 class ProcessingQueue:
-    def __init__(self, max_concurrent_jobs=10):  # Reduced from 15 to 8 for GPT-4.1
+    def __init__(self, max_concurrent_jobs=15):  # Reduced from 15 to 8 for GPT-4.1
         self.queue = asyncio.Queue()
         self.active_jobs = 0
         self.max_concurrent = max_concurrent_jobs
@@ -219,10 +242,10 @@ resume_extractor = ResumeExtractor()
 candidate_fit_evaluator = CandidateFitEvaluator()
 
 # Updated global instances with new limits
-rate_limiter = RateLimiter(max_requests=450, time_window=60, max_tokens_per_minute=180000)
+rate_limiter = RateLimiter(max_requests=450, time_window=60, max_tokens_per_minute=200000)
 job_storage = JobStorage()
-executor = ThreadPoolExecutor(max_workers=25)  # Reduced from 30 to 20
-processing_queue = ProcessingQueue(max_concurrent_jobs=10)  # Reduced from 15 to 8
+executor = ThreadPoolExecutor(max_workers=30)  # Reduced from 30 to 20
+processing_queue = ProcessingQueue(max_concurrent_jobs=15)  # Reduced from 15 to 8
 
 # Pydantic models
 class DownloadRequest(BaseModel):
@@ -295,7 +318,7 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
         job_storage.update_job(job_id, 'processing', progress=0)
         
         # Reduced concurrency for GPT-4.1 TPM limits
-        semaphore = asyncio.Semaphore(20)  # Reduced from 25 to 12
+        semaphore = asyncio.Semaphore(25)  # Reduced from 25 to 12
         
         async def process_with_semaphore(file_info, index):
             async with semaphore:
@@ -323,7 +346,7 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
         ]
         
         # Process in smaller batches for better memory management and rate limiting
-        batch_size = 30  # Reduced from 50 to 25
+        batch_size = 50  # Reduced from 50 to 25
         for i in range(0, len(tasks), batch_size):
             batch_tasks = tasks[i:i + batch_size]
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -386,7 +409,7 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     job_storage.update_job(job_id, 'processing', progress=0)
     
     # Reduced concurrent operations for GPT-4.1 TPM limits
-    semaphore = asyncio.Semaphore(15)  # Reduced from 20 to 10
+    semaphore = asyncio.Semaphore(20)  # Reduced from 20 to 10
     
     async def process_with_semaphore(resume, index):
         async with semaphore:
@@ -406,7 +429,7 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     ]
     
     # Process in smaller batches for candidate fit
-    batch_size = 15  # Reduced from 25 to 15
+    batch_size = 25  # Reduced from 25 to 15
     for i in range(0, len(tasks), batch_size):
         batch_tasks = tasks[i:i + batch_size]
         batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -424,6 +447,71 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
 
+"""@app.on_event("startup")
+async def startup():
+    await create_db()
+
+def verify_password(plain, hashed):
+    return pwd_context.verify(plain, hashed)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+async def get_user(session, username: str):
+    result = await session.execute(
+        select(User).where(User.username == username)
+    )
+    return result.scalar_one_or_none()
+
+async def get_user_by_id(session, user_id: int):
+    #""Get user by ID - returns User object or None
+    return await session.get(User, user_id)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, 
+        detail="Could not validate credentials", 
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    async with AsyncSessionLocal() as session:
+        user = await get_user(session, username)
+        if user is None:
+            raise credentials_exception
+        return user
+    
+@app.post("/register")
+async def register(user: UserIn):
+    async with AsyncSessionLocal() as session:
+        db_user = await get_user(session, user.username)
+        if db_user:
+            raise HTTPException(status_code=400, detail="Username already exists")
+        hashed_password = get_password_hash(user.password)
+        new_user = User(username=user.username, hashed_password=hashed_password)
+        session.add(new_user)
+        await session.commit()
+        return {"message": "User registered successfully"}
+    
+@app.post("/login", response_model=Token)
+async def login(form_data: UserIn):
+    async with AsyncSessionLocal() as session:
+        user = await get_user(session, form_data.username)
+        if not user or not verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        access_token = create_access_token(data={"sub": user.username})
+        return {"access_token": access_token, "token_type": "bearer"}"""
 
 @app.get("/")
 async def root():
@@ -675,6 +763,17 @@ async def download_fit_excel(data: dict):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
     )
+
+"""@app.post("/save-extracted-data")
+async def save_extracted_data(data: dict, user=Depends(get_current_user)):
+    # Save data to a table with user_id reference (implement your own model)
+    # Example: ResumeData(user_id=user.id, data=json.dumps(data))
+    return {"msg": "Data saved for user", "user": user.username}
+
+@app.get("/get-extracted-data")
+async def get_extracted_data(user=Depends(get_current_user)):
+    # Query your ResumeData table for user_id=user.id
+    return {"msg": "Fetched data for user", "user": user.username}"""
 
 # Updated health check to show TPM information
 @app.get("/system/health")

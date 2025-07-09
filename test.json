@@ -1,0 +1,6 @@
+{
+  "filename": "Ashish_More_QA_Engineer.pdf",
+  "error": "Failed to parse AI response as JSON after 3 attempts: Invalid control character at: line 3 column 30 (char 54)",
+  "raw_response": "{\n    \"personal_info\": {\n        \"name\": \"A s h i s h  M o r e\",\n        \"email\": \"i . a s h i s h m o r e @ g m a i l . c o m\",\n        \"phone\": \"+91 7558447594\",\n        \"location\": \"Ahmedabad, 380009\",\n        \"linkedin\": \"\",\n        \"portfolio\": \"\"\n    },\n    \"summary\": \"I am seeking an opportunity in a growth-oriented organization with strong leadership in Manual and Automation Testing. I have experience in Functional, UI, API (Postman), Web Services, and Automation Testing using Selenium ",
+  "success": false
+}

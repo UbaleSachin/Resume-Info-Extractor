@@ -48,7 +48,7 @@ class ResumeExtractor:
         
         # Rate limiting - aligned with main.py settings
         self.daily_limits = {
-            'openai': 500  # RPM limit for gpt-3.5-turbo
+            'openai': 1000  # RPM limit for gpt-3.5-turbo
         }
 
         # Define extraction prompt with better JSON structure
