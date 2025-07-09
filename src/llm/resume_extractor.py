@@ -33,7 +33,7 @@ class ResumeExtractor:
         # Available API providers and models
         self.api_providers = {
             'openai': {
-                'models': [('gpt-4.1', 4000)],  # Added gpt-4 as backup
+                'models': [('gpt-3.5-turbo', 4000)],  # Added gpt-4 as backup
                 'api_key': self.openai_api_key,
             }
         }
