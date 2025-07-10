@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import asyncio
 from collections import defaultdict, deque
+import subprocess
+import platform
+from pathlib import Path
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -48,7 +51,7 @@ class ResumeExtractor:
         
         # Rate limiting - aligned with main.py settings
         self.daily_limits = {
-            'openai': 1000  # RPM limit for gpt-3.5-turbo
+            'openai': 10000  # RPM limit for gpt-3.5-turbo
         }
 
         # Define extraction prompt with better JSON structure
@@ -360,7 +363,9 @@ Resume text:
         try:
             if file_extension == '.pdf':
                 return self._extract_from_pdf(file_path)
-            elif file_extension in ['.doc', '.docx']:
+            elif file_extension == '.doc':
+                return self._extract_from_doc(file_path)
+            elif file_extension == '.docx':
                 return self._extract_from_docx(file_path)
             elif file_extension in ['.xls', '.xlsx']:
                 return self._extract_from_excel(file_path)
@@ -392,6 +397,140 @@ Resume text:
             raise Exception(f"Error reading PDF: {str(e)}")
         
         return text.strip()
+    
+    def _extract_from_doc(self, file_path: str) -> str:
+        """Extract text from legacy DOC file using multiple approaches"""
+        text = ""
+        
+        # Method 1: Try using python-docx2txt (if available)
+        try:
+            import docx2txt
+            text = docx2txt.process(file_path)
+            if text and text.strip():
+                return text.strip()
+        except ImportError:
+            logger.info("docx2txt not available, trying alternative methods")
+        except Exception as e:
+            logger.warning(f"docx2txt failed: {e}")
+        
+        # Method 2: Try using antiword (Linux/Mac command line tool)
+        try:
+            if platform.system() in ['Linux', 'Darwin']:  # Linux or Mac
+                result = subprocess.run(
+                    ['antiword', file_path], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=30
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+            logger.warning(f"antiword failed: {e}")
+        
+        # Method 3: Try using catdoc (Linux/Mac command line tool)
+        try:
+            if platform.system() in ['Linux', 'Darwin']:  # Linux or Mac
+                result = subprocess.run(
+                    ['catdoc', file_path], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=30
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+            logger.warning(f"catdoc failed: {e}")
+        
+        # Method 4: Try using LibreOffice/OpenOffice conversion (if available)
+        try:
+            temp_dir = Path(file_path).parent / "temp_conversion"
+            temp_dir.mkdir(exist_ok=True)
+            
+            # Try LibreOffice first
+            commands_to_try = [
+                ['libreoffice', '--headless', '--convert-to', 'txt', '--outdir', str(temp_dir), file_path],
+                ['soffice', '--headless', '--convert-to', 'txt', '--outdir', str(temp_dir), file_path]
+            ]
+            
+            for cmd in commands_to_try:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    if result.returncode == 0:
+                        # Find the converted txt file
+                        txt_filename = Path(file_path).stem + '.txt'
+                        txt_path = temp_dir / txt_filename
+                        
+                        if txt_path.exists():
+                            with open(txt_path, 'r', encoding='utf-8') as f:
+                                converted_text = f.read()
+                            
+                            # Clean up temp file
+                            txt_path.unlink()
+                            temp_dir.rmdir()
+                            
+                            if converted_text.strip():
+                                return converted_text.strip()
+                    
+                except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+                    logger.warning(f"LibreOffice conversion failed: {e}")
+                    continue
+            
+            # Clean up temp directory if it exists
+            if temp_dir.exists():
+                try:
+                    temp_dir.rmdir()
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.warning(f"LibreOffice conversion failed: {e}")
+        
+        # Method 5: Try reading as binary and extract readable text (fallback)
+        try:
+            with open(file_path, 'rb') as f:
+                binary_data = f.read()
+            
+            # Try to decode and extract readable text
+            try:
+                # Try different encodings
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        decoded = binary_data.decode(encoding, errors='ignore')
+                        # Extract printable ASCII characters
+                        import string
+                        printable_text = ''.join(char for char in decoded if char in string.printable)
+                        
+                        # Clean up the text - remove excessive whitespace and non-text elements
+                        lines = []
+                        for line in printable_text.split('\n'):
+                            line = line.strip()
+                            if len(line) > 2 and not line.startswith('\n'):
+                                lines.append(line)
+                        
+                        cleaned_text = '\n'.join(lines)
+                        
+                        # If we have reasonable amount of text, return it
+                        if len(cleaned_text) > 50:  # Minimum threshold
+                            return cleaned_text
+                            
+                    except UnicodeDecodeError:
+                        continue
+                        
+            except Exception as e:
+                logger.warning(f"Binary text extraction failed: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Binary file reading failed: {e}")
+        
+        # If all methods fail, raise an exception with helpful information
+        raise Exception(
+            f"Could not extract text from .doc file. "
+            f"Please consider converting the file to .docx format or install additional tools:\n"
+            f"- Install docx2txt: pip install docx2txt\n"
+            f"- Install antiword (Linux/Mac): sudo apt-get install antiword or brew install antiword\n"
+            f"- Install catdoc (Linux/Mac): sudo apt-get install catdoc or brew install catdoc\n"
+            f"- Install LibreOffice for conversion support"
+        )
 
     def _extract_from_docx(self, file_path: str) -> str:
         """Extract text from DOCX file with better error handling"""
@@ -415,7 +554,16 @@ Resume text:
                         text += " | ".join(row_text) + "\n"
                         
         except Exception as e:
-            raise Exception(f"Error reading DOCX: {str(e)}")
+            # If it's a .docx file but fails, it might actually be a .doc file with wrong extension
+            file_extension = os.path.splitext(file_path)[1].lower()
+            if file_extension == '.docx':
+                logger.warning(f"DOCX extraction failed, trying DOC methods: {e}")
+                try:
+                    return self._extract_from_doc(file_path)
+                except Exception as doc_error:
+                    raise Exception(f"Error reading DOCX (tried DOC methods too): {str(e)} | DOC attempt: {str(doc_error)}")
+            else:
+                raise Exception(f"Error reading DOCX: {str(e)}")
         
         return text.strip()
 
