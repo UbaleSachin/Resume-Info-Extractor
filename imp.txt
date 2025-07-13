@@ -150,3 +150,24 @@ function hideCandidateComparison() {
     const modal = document.getElementById('compareModal');
     if (modal) modal.style.display = 'none';
 }"""
+
+
+29:Anil-salesforce.pdf (2).pdf, no text error
+40:Ashish-More-QA-Engineer.pdf, json error
+114:CVAISHAHALZEYOUDI.pdf, 
+150:Divya_Gunjal_9518788170.pdf,
+174:Gaytri_Sonawane_Resume.pdf, 
+326:Pooja Gujrathi - HR Executive  (1).pdf, 
+360:Resume (6).pdf, 
+361:RESUME ASIF SHAIKH.pdf, 
+364:Resume..pdf, 
+408:SAIKRISHNA_DASIKA_Resume.pdf, 
+432:Sharma Neha Resume.pdf, 
+434:shivani cv (1).pdf,
+ 
+doc, docx
+123:CVAmilRodrigues.doc,
+235:Kishan Malepu_Salesforce_Profile newww.doc,
+281:Naresh_Kumar_Salesforce_CRM.doc,  
+286:Naukri_GudaShekhar[6y_3m].docx,
+350:Ravali-Golang-Developer-Resume.docx,

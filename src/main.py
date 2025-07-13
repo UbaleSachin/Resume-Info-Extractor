@@ -66,7 +66,7 @@ class RateLimiter:
         self.current_minute_tokens = 0
         self.last_minute_reset = time.time()
     
-    async def acquire(self, estimated_tokens=1000):  # Default estimate for resume processing
+    async def acquire(self, estimated_tokens=2500):  # Default estimate for resume processing
         """Wait until we can make a request within both RPM and TPM limits"""
         async with self.lock:
             now = time.time()
@@ -241,14 +241,16 @@ class CandidateFitRequest(BaseModel):
 async def process_single_resume(resume_extractor, file_path, filename):
     """Process a single resume with rate limiting and token estimation"""
     # Estimate tokens based on file size (rough approximation)
-    estimated_tokens = 1000  # Default estimate
+    estimated_tokens = 2500  # Default estimate
     try:
         if os.path.exists(file_path):
             file_size = os.path.getsize(file_path)
             # Rough estimation: 1 token per 4 characters, average resume ~4000 characters
-            estimated_tokens = min(max(file_size // 4, 800), 2000)  # Between 800-2000 tokens
+            input_tokens = file_size // 4
+            output_tokens = 4000
+            estimated_tokens = min(max(input_tokens + output_tokens, 2000), 8000)  # Between 800-2000 tokens
     except:
-        estimated_tokens = 1000
+        estimated_tokens = 2500
     
     await rate_limiter.acquire(estimated_tokens)
     
