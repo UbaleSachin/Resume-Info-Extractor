@@ -47,14 +47,16 @@ class ResumeExtractor:
         # Available API providers and models
         self.api_providers = {
             'openai': {
-                'models': [('gpt-4o', 8000), ('gpt-4o-mini', 4000)],  # Vision-capable models
+                'vision_models': [('gpt-4o', 8000), ('gpt-4o-mini', 4000)],  # Vision-capable models for OCR/scanned
+                'text_models': [('gpt-4o-mini', 4000)],  # Text-only models for text-based PDFs
                 'api_key': self.openai_api_key,
             }
         }
         
-        # Current provider and model
+        # Current provider and model indices
         self.current_provider = 'openai'
-        self.current_model_index = 0
+        self.current_vision_model_index = 0
+        self.current_text_model_index = 0
         
         # Usage tracking
         self.usage_file = 'resume_api_usage_tracking.json'
@@ -128,33 +130,44 @@ class ResumeExtractor:
             ]
             }
 
-**Extraction Rules:**
-- Extract all entries in each category (multiple jobs, degrees, projects, etc.).
-- Use empty strings or empty arrays for missing or not found values.
-- Include only the first email and phone number found, even if multiple exist.
-- Include country code in phone numbers if present.
-- Include all skill types: Technical, Soft, Tools, Platforms, and Domain-Specific.
-- Only include skill from skill section not from other section.
-- Preserve bullet points in description fields where applicable.
-- Accept ALL-CAPS or spaced section headers (e.g., "P R O J E C T S") as valid dividers.
-- For sections titled "Projects", "Academic Projects", etc.:
-- Parse only into the projects array, not experience.
-- For the experience array, only include an entry if:
-- It names a company or organization, and
-- It includes a job title (e.g., Intern, Analyst, Developer).
-- Under experience, parse lines like X - Y as:
-- title = X, company = Y
-- If "Fresher" is mentioned or there's no employment history:
-- Keep the experience array empty.
-- Use contextual cues (e.g., "developed", "collaborated", "built") to recognize project entries.
-"""
+    **Extraction Rules:**
+    - Extract all entries in each category (multiple jobs, degrees, projects, etc.).
+    - Use empty strings or empty arrays for missing or not found values.
+    - Include only the first email and phone number found, even if multiple exist.
+    - Include country code in phone numbers if present.
+    - Include all skill types: Technical, Soft, Tools, Platforms, and Domain-Specific.
+    - Only include skill from skill section not from other section.
+    - Preserve bullet points in description fields where applicable.
+    - Accept ALL-CAPS or spaced section headers (e.g., "P R O J E C T S") as valid dividers.
+    - For sections titled "Projects", "Academic Projects", etc.:
+    - Parse only into the projects array, not experience.
+    - For the experience array, only include an entry if:
+    - It names a company or organization, and
+    - It includes a job title (e.g., Intern, Analyst, Developer).
+    - Under experience, parse lines like X - Y as:
+    - title = X, company = Y
+    - If "Fresher" is mentioned or there's no employment history:
+    - Keep the experience array empty.
+    - Use contextual cues (e.g., "developed", "collaborated", "built") to recognize project entries.
+    """
         
         # Initialize OpenAI client
         self.openai_client = OpenAI(api_key=self.openai_api_key) if self.openai_api_key else None
         
         print(f"Initialized with provider: {self.current_provider}")
-        print(f"Current model: {self.get_current_model()}")
+        print(f"Current vision model: {self.get_current_vision_model()}")
+        print(f"Current text model: {self.get_current_text_model()}")
 
+    def get_current_vision_model(self) -> str:
+        """Get the current vision model being used."""
+        provider_config = self.api_providers[self.current_provider]
+        return provider_config['vision_models'][self.current_vision_model_index][0]
+
+    def get_current_text_model(self) -> str:
+        """Get the current text model being used."""
+        provider_config = self.api_providers[self.current_provider]
+        return provider_config['text_models'][self.current_text_model_index][0]
+    
     def _make_openai_vision_api_call(self, images: List[str], model: str) -> Optional[str]:
         """Make API call to OpenAI Vision API with image data"""
         if not self.openai_client:
@@ -202,16 +215,16 @@ class ResumeExtractor:
             
             messages.append(user_message)
             
-            # Determine max_tokens based on model
+            """# Determine max_tokens based on model
             if model == 'gpt-4o-mini':
                 max_output_tokens = 4000
             else:  # gpt-4o
-                max_output_tokens = 8000
+                max_output_tokens = 8000"""
             
             completion = self.openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=max_output_tokens,
+                max_tokens=6000,
                 temperature=0,  # Keep deterministic
             )
 
@@ -224,7 +237,7 @@ class ResumeExtractor:
             return None
 
     def _make_openai_text_api_call(self, text_content: str, model: str) -> Optional[str]:
-        """Make API call to OpenAI with text content (fallback for text-based PDFs)"""
+        """Make API call to OpenAI with text content (for text-based PDFs)"""
         if not self.openai_client:
             logger.error("OpenAI client not initialized - check API key")
             return None
@@ -235,6 +248,8 @@ class ResumeExtractor:
             
             # Determine max_tokens based on model
             if model == 'gpt-4o-mini':
+                max_output_tokens = 4000
+            elif model == 'gpt-4o-mini':
                 max_output_tokens = 4000
             else:  # gpt-4o
                 max_output_tokens = 8000
@@ -270,6 +285,7 @@ class ResumeExtractor:
         except Exception as e:
             logger.error(f"Error making OpenAI text API call: {str(e)}")
             return None
+
 
     def _pdf_to_images(self, file_path: str, max_pages: int = 10) -> List[str]:
         """Convert PDF pages to base64 encoded images for Vision API"""
@@ -380,7 +396,7 @@ class ResumeExtractor:
 
     def extract_from_file(self, file_path: str, filename: str, max_retries: int = 3) -> Dict[str, Any]:
         """
-        Extract resume data from a file using OpenAI Vision API for scanned documents
+        Extract resume data from a file using appropriate model based on content type
         """
         try:
             file_extension = os.path.splitext(file_path)[1].lower()
@@ -393,14 +409,11 @@ class ResumeExtractor:
                     "success": False
                 }
             
-            current_model = self.get_current_model()
-            logger.info(f"Using {self.current_provider} - {current_model} for {filename}")
-            
-            # Handle PDF files with intelligent approach
+            # Handle PDF files with intelligent model selection
             if file_extension == '.pdf':
-                return self._extract_from_pdf_intelligent(file_path, filename, current_model, max_retries)
+                return self._extract_from_pdf_intelligent(file_path, filename, max_retries)
             
-            # Handle other file types with text extraction
+            # Handle other file types with text model (they are all text-based)
             else:
                 text_content = self._extract_text_from_file(file_path)
                 
@@ -411,7 +424,10 @@ class ResumeExtractor:
                         "success": False
                     }
                 
-                return self._extract_with_text_api(text_content, filename, current_model, max_retries)
+                # Use text model for non-PDF files
+                model = self.get_current_text_model()
+                logger.info(f"Using text model {model} for {filename}")
+                return self._extract_with_text_api(text_content, filename, model, max_retries)
                 
         except Exception as e:
             logger.error(f"Error processing file {filename}: {str(e)}")
@@ -421,30 +437,53 @@ class ResumeExtractor:
                 "success": False
             }
 
-    def _extract_from_pdf_intelligent(self, file_path: str, filename: str, model: str, max_retries: int) -> Dict[str, Any]:
+    def _extract_from_pdf_intelligent(self, file_path: str, filename: str, max_retries: int) -> Dict[str, Any]:
         """
-        Intelligent PDF extraction: Try text extraction first, then fall back to Vision API
+        Intelligent PDF extraction: Use appropriate model based on PDF type
         """
         try:
-            # Step 1: Check if PDF is text-based
+            # Step 1: Check if PDF is text-based or image-based
             pdf_type = self._check_pdf_type(file_path)
             logger.info(f"PDF type detected: {pdf_type}")
             
-            # Step 2: Try text extraction for text-based PDFs
+            # Step 2: Choose appropriate model based on PDF type
             if pdf_type == "text-based":
+                # Use text model for text-based PDFs
+                model = self.get_current_text_model()
+                logger.info(f"Using text model {model} for text-based PDF: {filename}")
+                
                 try:
                     text_content = self._extract_text_from_pdf_simple(file_path)
                     if self._validate_extracted_text(text_content):
-                        logger.info(f"Using text extraction for {filename}")
                         return self._extract_with_text_api(text_content, filename, model, max_retries)
                     else:
-                        logger.info(f"Text extraction quality low for {filename}, trying Vision API")
+                        logger.info(f"Text extraction quality low for {filename}, falling back to Vision API")
+                        # Fall back to vision model if text extraction fails
+                        model = self.get_current_vision_model()
+                        return self._extract_with_vision_api(file_path, filename, model, max_retries)
                 except Exception as e:
                     logger.warning(f"Text extraction failed for {filename}: {e}")
+                    # Fall back to vision model
+                    model = self.get_current_vision_model()
+                    return self._extract_with_vision_api(file_path, filename, model, max_retries)
             
-            # Step 3: Use Vision API for image-based or problematic PDFs
-            logger.info(f"Using Vision API for {filename}")
-            
+            else:
+                # Use vision model for image-based or unknown PDFs
+                model = self.get_current_vision_model()
+                logger.info(f"Using vision model {model} for image-based/scanned PDF: {filename}")
+                return self._extract_with_vision_api(file_path, filename, model, max_retries)
+                
+        except Exception as e:
+            logger.error(f"Error in intelligent PDF extraction: {str(e)}")
+            return {
+                "filename": filename,
+                "error": f"Error in PDF processing: {str(e)}",
+                "success": False
+            }
+
+    def _extract_with_vision_api(self, file_path: str, filename: str, model: str, max_retries: int) -> Dict[str, Any]:
+        """Extract resume data using Vision API for scanned/image-based PDFs"""
+        try:
             # Convert PDF to images
             images = self._pdf_to_images(file_path)
             
@@ -474,7 +513,7 @@ class ResumeExtractor:
                         json_data["extraction_timestamp"] = datetime.now().isoformat()
                         
                         # Post-process and validate data
-                        json_data = self._post_process_data(json_data)
+                        #json_data = self._post_process_data(json_data)
                         
                         return json_data
                         
@@ -506,13 +545,13 @@ class ResumeExtractor:
             }
             
         except Exception as e:
-            logger.error(f"Error in intelligent PDF extraction: {str(e)}")
+            logger.error(f"Error in vision API extraction: {str(e)}")
             return {
                 "filename": filename,
-                "error": f"Error in PDF processing: {str(e)}",
+                "error": f"Error in vision API processing: {str(e)}",
                 "success": False
             }
-
+    
     def _extract_with_text_api(self, text_content: str, filename: str, model: str, max_retries: int) -> Dict[str, Any]:
         """Extract resume data using text-based API"""
         for attempt in range(max_retries):
@@ -533,7 +572,7 @@ class ResumeExtractor:
                     json_data["extraction_timestamp"] = datetime.now().isoformat()
                     
                     # Post-process and validate data
-                    json_data = self._post_process_data(json_data)
+                    #json_data = self._post_process_data(json_data)
                     
                     return json_data
                     
@@ -690,47 +729,6 @@ class ResumeExtractor:
             logger.error(f"Error extracting text from {file_extension} file: {str(e)}")
             raise Exception(f"Error extracting text from {file_extension} file: {str(e)}")
 
-    def _extract_from_docx(self, file_path: str) -> str:
-        """Extract text from DOCX file"""
-        text = ""
-        try:
-            doc = docx.Document(file_path)
-            
-            # Extract text from paragraphs
-            for paragraph in doc.paragraphs:
-                if paragraph.text.strip():
-                    text += paragraph.text + "\n"
-            
-            # Extract text from tables
-            for table in doc.tables:
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            row_text.append(cell.text.strip())
-                    if row_text:
-                        text += " | ".join(row_text) + "\n"
-                        
-        except Exception as e:
-            raise Exception(f"Error reading DOCX: {str(e)}")
-        
-        return text.strip()
-
-    def _extract_from_doc(self, file_path: str) -> str:
-        """Extract text from legacy DOC file"""
-        # Implementation for DOC files (simplified)
-        try:
-            # Try using python-docx2txt if available
-            import docx2txt
-            text = docx2txt.process(file_path)
-            if text and text.strip():
-                return text.strip()
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.warning(f"docx2txt failed: {e}")
-        
-        raise Exception("DOC file extraction requires additional dependencies")
 
     def _extract_from_excel(self, file_path: str) -> str:
         """Extract text from Excel file"""
@@ -814,58 +812,6 @@ class ResumeExtractor:
         
         return '\n'.join(filtered_lines)
 
-
-    def _extract_text_from_file(self, file_path: str) -> str:
-        """Extract text content from various file formats with better error handling"""
-        file_extension = os.path.splitext(file_path)[1].lower()
-        
-        try:
-            if file_extension == '.pdf':
-                return self._extract_from_pdf(file_path)
-            elif file_extension == '.doc':
-                return self._extract_from_doc(file_path)
-            elif file_extension == '.docx':
-                return self._extract_from_docx(file_path)
-            elif file_extension in ['.xls', '.xlsx']:
-                return self._extract_from_excel(file_path)
-            elif file_extension == '.txt':
-                return self._extract_from_txt(file_path)
-            else:
-                raise ValueError(f"Unsupported file type: {file_extension}")
-                
-        except Exception as e:
-            logger.error(f"Error extracting text from {file_extension} file: {str(e)}")
-            raise Exception(f"Error extracting text from {file_extension} file: {str(e)}")
-
-    def _check_pdf_type(self, file_path: str) -> str:
-        """Check if PDF is text-based or image-based"""
-        try:
-            # Quick check with PyPDF2
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                if len(pdf_reader.pages) == 0:
-                    return "empty"
-                
-                # Check first few pages
-                text_chars = 0
-                pages_to_check = min(3, len(pdf_reader.pages))
-                
-                for i in range(pages_to_check):
-                    try:
-                        page_text = pdf_reader.pages[i].extract_text()
-                        text_chars += len(page_text.strip())
-                    except:
-                        continue
-                
-                # If we got substantial text, it's likely text-based
-                if text_chars > 100:
-                    return "text-based"
-                else:
-                    return "image-based"
-                    
-        except Exception as e:
-            logger.warning(f"Could not determine PDF type: {e}")
-            return "unknown"
     
     def _extract_from_doc(self, file_path: str) -> str:
         """Extract text from legacy DOC file using multiple approaches"""
@@ -1036,46 +982,6 @@ class ResumeExtractor:
         
         return text.strip()
 
-    def _extract_from_excel(self, file_path: str) -> str:
-        """Extract text from Excel file with better error handling"""
-        text = ""
-        try:
-            # Read all sheets
-            excel_file = pd.ExcelFile(file_path)
-            
-            for sheet_name in excel_file.sheet_names:
-                try:
-                    df = pd.read_excel(file_path, sheet_name=sheet_name)
-                    # Convert dataframe to string, handling NaN values
-                    sheet_text = df.fillna('').to_string(index=False)
-                    text += f"Sheet: {sheet_name}\n{sheet_text}\n\n"
-                except Exception as e:
-                    logger.warning(f"Error reading sheet {sheet_name}: {e}")
-                    continue
-                    
-        except Exception as e:
-            raise Exception(f"Error reading Excel: {str(e)}")
-        
-        return text.strip()
-
-    def _extract_from_txt(self, file_path: str) -> str:
-        """Extract text from TXT file with better encoding handling"""
-        text = ""
-        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-        
-        for encoding in encodings:
-            try:
-                with open(file_path, 'r', encoding=encoding) as file:
-                    text = file.read()
-                break
-            except (UnicodeDecodeError, UnicodeError):
-                continue
-        
-        if not text:
-            raise Exception("Could not read TXT file with any supported encoding")
-        
-        return text.strip()
-
     def _clean_json_response(self, response_text: str) -> dict:
         """Clean and safely parse the AI response into valid JSON"""
         if not response_text:
@@ -1131,7 +1037,7 @@ class ResumeExtractor:
                 name = ' '.join(word.capitalize() for word in name.split())  # Proper case
                 personal_info["name"] = name.strip()
             
-            # Enhanced email validation and correction
+            """# Enhanced email validation and correction
             if "email" in personal_info and personal_info["email"]:
                 email = personal_info["email"]
                 # Common OCR email fixes
@@ -1150,9 +1056,9 @@ class ResumeExtractor:
                     if email_match:
                         personal_info["email"] = email_match.group(0).lower()
                     else:
-                        personal_info["email"] = ""
+                        personal_info["email"] = """""
             
-            # Enhanced phone number cleaning
+            """# Enhanced phone number cleaning
             if "phone" in personal_info and personal_info["phone"]:
                 phone = personal_info["phone"]
                 # Remove common OCR artifacts
@@ -1164,7 +1070,7 @@ class ResumeExtractor:
                 if len(digits_only) >= 10:
                     personal_info["phone"] = phone
                 else:
-                    personal_info["phone"] = ""
+                    personal_info["phone"] = """""
             
             # Clean LinkedIn URL
             if "linkedin" in personal_info and personal_info["linkedin"]:
@@ -1187,7 +1093,7 @@ class ResumeExtractor:
                     else:
                         personal_info["linkedin"] = ""
         
-        # Enhanced skills cleaning
+        """# Enhanced skills cleaning
         if "skills" in data and isinstance(data["skills"], list):
             skills = []
             seen_skills = set()
@@ -1201,9 +1107,9 @@ class ResumeExtractor:
                     if 2 <= len(skill_cleaned) <= 50 and skill_cleaned.lower() not in seen_skills:
                         skills.append(skill_cleaned)
                         seen_skills.add(skill_cleaned.lower())
-            data["skills"] = skills
+            data["skills"] = skills"""
         
-        # Enhanced experience cleaning
+        """# Enhanced experience cleaning
         if "experience" in data and isinstance(data["experience"], list):
             cleaned_experience = []
             for exp in data["experience"]:
@@ -1225,7 +1131,7 @@ class ResumeExtractor:
                     # Only keep if has meaningful content
                     if exp.get("company") and exp.get("title"):
                         cleaned_experience.append(exp)
-            data["experience"] = cleaned_experience
+            data["experience"] = cleaned_experience"""
         
         return data
 
@@ -1247,13 +1153,23 @@ class ResumeExtractor:
             provider_summary['remaining'] = daily_limit - total_usage
             provider_summary['usage_percentage'] = (total_usage / daily_limit) * 100
             provider_summary['status'] = 'Available' if total_usage < daily_limit else 'Exhausted'
-            provider_summary['models'] = {}
+            provider_summary['vision_models'] = {}
+            provider_summary['text_models'] = {}
             
-            # Model-specific usage
-            for model_info in config['models']:
+            # Vision model-specific usage
+            for model_info in config['vision_models']:
                 model = model_info[0]
                 model_usage = self._get_today_usage(provider, model)
-                provider_summary['models'][model] = {
+                provider_summary['vision_models'][model] = {
+                    'usage': model_usage,
+                    'last_used': 'Today' if model_usage > 0 else 'Not used today'
+                }
+            
+            # Text model-specific usage
+            for model_info in config['text_models']:
+                model = model_info[0]
+                model_usage = self._get_today_usage(provider, model)
+                provider_summary['text_models'][model] = {
                     'usage': model_usage,
                     'last_used': 'Today' if model_usage > 0 else 'Not used today'
                 }

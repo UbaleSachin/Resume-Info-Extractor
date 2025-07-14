@@ -14,6 +14,7 @@ import json
 import csv
 import pandas as pd
 import io
+import PyPDF2
 from io import BytesIO, StringIO
 import tempfile
 import os, asyncio
@@ -56,59 +57,90 @@ app.add_middleware(
 
 # Rate limiter for OpenAI API
 class RateLimiter:
-    def __init__(self, max_requests=450, time_window=60, max_tokens_per_minute=180000):  # Conservative limits
-        self.max_requests = max_requests
-        self.time_window = time_window
-        self.max_tokens_per_minute = max_tokens_per_minute
-        self.requests = deque()
-        self.token_usage = deque()  # Track token usage with timestamps
+    def __init__(self):
+        # Model-specific limits
+        self.model_limits = {
+            'gpt-4o': {
+                'max_requests': 450,
+                'max_tokens_per_minute': 35000,
+                'time_window': 60
+            },
+            'gpt-4o-mini': {
+                'max_requests': 450,
+                'max_tokens_per_minute': 180000,
+                'time_window': 60
+            },
+            'gpt-3.5-turbo': {
+                'max_requests': 450,
+                'max_tokens_per_minute': 180000,
+                'time_window': 60
+            }
+        }
+        
+        # Per-model tracking
+        self.model_requests = {}
+        self.model_token_usage = {}
+        self.model_current_minute_tokens = {}
+        self.model_last_minute_reset = {}
+        
+        # Initialize tracking for each model
+        for model in self.model_limits:
+            self.model_requests[model] = deque()
+            self.model_token_usage[model] = deque()
+            self.model_current_minute_tokens[model] = 0
+            self.model_last_minute_reset[model] = time.time()
+        
         self.lock = asyncio.Lock()
-        self.current_minute_tokens = 0
-        self.last_minute_reset = time.time()
     
-    async def acquire(self, estimated_tokens=2500):  # Default estimate for resume processing
-        """Wait until we can make a request within both RPM and TPM limits"""
+    async def acquire(self, model_name='gpt-4o-mini', estimated_tokens=2500):
+        """Wait until we can make a request within both RPM and TPM limits for specific model"""
         async with self.lock:
+            if model_name not in self.model_limits:
+                model_name = 'gpt-4o-mini'  # Default fallback
+            
+            limits = self.model_limits[model_name]
             now = time.time()
             
             # Reset token counter every minute
-            if now - self.last_minute_reset >= 60:
-                self.current_minute_tokens = 0
-                self.last_minute_reset = now
+            if now - self.model_last_minute_reset[model_name] >= 60:
+                self.model_current_minute_tokens[model_name] = 0
+                self.model_last_minute_reset[model_name] = now
             
             # Remove old requests and token usage
-            while self.requests and self.requests[0] <= now - self.time_window:
-                self.requests.popleft()
+            while (self.model_requests[model_name] and 
+                   self.model_requests[model_name][0] <= now - limits['time_window']):
+                self.model_requests[model_name].popleft()
             
-            while self.token_usage and self.token_usage[0][0] <= now - self.time_window:
-                old_timestamp, old_tokens = self.token_usage.popleft()
-                self.current_minute_tokens -= old_tokens
+            while (self.model_token_usage[model_name] and 
+                   self.model_token_usage[model_name][0][0] <= now - limits['time_window']):
+                old_timestamp, old_tokens = self.model_token_usage[model_name].popleft()
+                self.model_current_minute_tokens[model_name] -= old_tokens
             
             # Check if we can make request within both limits
-            if (len(self.requests) < self.max_requests and 
-                self.current_minute_tokens + estimated_tokens <= self.max_tokens_per_minute):
+            if (len(self.model_requests[model_name]) < limits['max_requests'] and 
+                self.model_current_minute_tokens[model_name] + estimated_tokens <= limits['max_tokens_per_minute']):
                 
-                self.requests.append(now)
-                self.token_usage.append((now, estimated_tokens))
-                self.current_minute_tokens += estimated_tokens
+                self.model_requests[model_name].append(now)
+                self.model_token_usage[model_name].append((now, estimated_tokens))
+                self.model_current_minute_tokens[model_name] += estimated_tokens
                 return
             
             # Calculate wait time based on the more restrictive limit
             rpm_wait = 0
             tpm_wait = 0
             
-            if len(self.requests) >= self.max_requests:
-                oldest_request = self.requests[0]
-                rpm_wait = self.time_window - (now - oldest_request) + 0.1
+            if len(self.model_requests[model_name]) >= limits['max_requests']:
+                oldest_request = self.model_requests[model_name][0]
+                rpm_wait = limits['time_window'] - (now - oldest_request) + 0.1
             
-            if self.current_minute_tokens + estimated_tokens > self.max_tokens_per_minute:
-                tpm_wait = 60 - (now - self.last_minute_reset) + 0.1
+            if self.model_current_minute_tokens[model_name] + estimated_tokens > limits['max_tokens_per_minute']:
+                tpm_wait = 60 - (now - self.model_last_minute_reset[model_name]) + 0.1
             
             wait_time = max(rpm_wait, tpm_wait)
             
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
-                await self.acquire(estimated_tokens)  # Retry after waiting
+                await self.acquire(model_name, estimated_tokens)  # Retry after waiting
 
 # Redis-based job storage
 class JobStorage:
@@ -157,12 +189,26 @@ class JobStorage:
 
 # Updated ProcessingQueue with lower concurrency for GPT-4.1
 class ProcessingQueue:
-    def __init__(self, max_concurrent_jobs=10):  # Reduced from 15 to 8 for GPT-4.1
+    def __init__(self):
+        # Model-specific concurrency limits
+        self.model_concurrency = {
+            'gpt-4o': 8,        # Lower due to 40k TPM limit
+            'gpt-4o-mini': 15,  # Higher due to 200k TPM limit
+            'gpt-3.5-turbo': 15 # Medium concurrency
+        }
+        
         self.queue = asyncio.Queue()
         self.active_jobs = 0
-        self.max_concurrent = max_concurrent_jobs
+        self.max_concurrent = 25  # Overall max
         self.processing_task = None
         self.running = False
+        
+        # Track active jobs per model
+        self.model_active_jobs = {
+            'gpt-4o': 0,
+            'gpt-4o-mini': 0,
+            'gpt-3.5-turbo': 0
+        }
     
     async def add_job(self, job_type, job_id, *args):
         await self.queue.put((job_type, job_id, args))
@@ -176,12 +222,12 @@ class ProcessingQueue:
             try:
                 # Check if we can process more jobs
                 if self.active_jobs >= self.max_concurrent:
-                    await asyncio.sleep(1.0)  # Increased sleep time for better stability
+                    await asyncio.sleep(1.0)
                     continue
                 
                 # Get next job with timeout
                 job_type, job_id, args = await asyncio.wait_for(
-                    self.queue.get(), timeout=2.0  # Increased timeout
+                    self.queue.get(), timeout=2.0
                 )
                 
                 self.active_jobs += 1
@@ -218,11 +264,11 @@ class ProcessingQueue:
 resume_extractor = ResumeExtractor()
 candidate_fit_evaluator = CandidateFitEvaluator()
 
-# Updated global instances with new limits
-rate_limiter = RateLimiter(max_requests=450, time_window=60, max_tokens_per_minute=180000)
+# Updated global instances
+rate_limiter = RateLimiter()  # Now handles multiple models
 job_storage = JobStorage()
-executor = ThreadPoolExecutor(max_workers=25)  # Reduced from 30 to 20
-processing_queue = ProcessingQueue(max_concurrent_jobs=10)  # Reduced from 15 to 8
+executor = ThreadPoolExecutor(max_workers=30)  # Increased for better model distribution
+processing_queue = ProcessingQueue()  # Now model-aware
 
 # Pydantic models
 class DownloadRequest(BaseModel):
@@ -237,22 +283,17 @@ class CandidateFitRequest(BaseModel):
     job_description_data: str
     fit_options: Optional[Dict[str, Any]] = None
 
-# Updated process_single_resume with token estimation
+# Updated process_single_resume with model-aware token estimation
 async def process_single_resume(resume_extractor, file_path, filename):
-    """Process a single resume with rate limiting and token estimation"""
-    # Estimate tokens based on file size (rough approximation)
-    estimated_tokens = 2500  # Default estimate
-    try:
-        if os.path.exists(file_path):
-            file_size = os.path.getsize(file_path)
-            # Rough estimation: 1 token per 4 characters, average resume ~4000 characters
-            input_tokens = file_size // 4
-            output_tokens = 4000
-            estimated_tokens = min(max(input_tokens + output_tokens, 2000), 8000)  # Between 800-2000 tokens
-    except:
-        estimated_tokens = 2500
+    """Process a single resume with model-aware rate limiting and token estimation"""
     
-    await rate_limiter.acquire(estimated_tokens)
+    # Determine model based on file type (you'll need to implement this logic)
+    model_name = determine_model_for_file(file_path, filename)
+    
+    # Model-specific token estimation
+    estimated_tokens = estimate_tokens_for_model(file_path, model_name)
+    
+    await rate_limiter.acquire(model_name, estimated_tokens)
     
     try:
         # Verify file exists before processing
@@ -283,9 +324,91 @@ async def process_single_resume(resume_extractor, file_path, filename):
         except Exception as e:
             print(f"Error cleaning up temp file {file_path}: {str(e)}")
 
-# Updated process_extraction_job_async with better concurrency control
+# Helper function to determine model based on file type
+def determine_model_for_file(file_path, filename):
+    """Determine which model to use based on file characteristics"""
+    try:
+        # Check if it's a scanned PDF (you'll need to implement this logic)
+        if filename.lower().endswith('.pdf'):
+            # If it's a scanned PDF, use gpt-4o-mini for better OCR handling
+            if is_scanned_pdf(file_path):
+                return 'gpt-4o-mini'
+            else:
+                return 'gpt-4o-mini'  # Regular PDF
+        else:
+            # For other formats, use gpt-4o-mini as default
+            return 'gpt-4o-mini'
+    except:
+        return 'gpt-4o-mini'  # Default fallback
+    
+# Helper function to check if PDF is scanned
+def is_scanned_pdf(file_path):
+    """Check if PDF is text-based or image-based"""
+    try:
+        # Quick check with PyPDF2
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            if len(pdf_reader.pages) == 0:
+                return "empty"
+            
+            # Check first few pages
+            text_chars = 0
+            pages_to_check = min(3, len(pdf_reader.pages))
+            
+            for i in range(pages_to_check):
+                try:
+                    page_text = pdf_reader.pages[i].extract_text()
+                    text_chars += len(page_text.strip())
+                except:
+                    continue
+            
+            # If we got substantial text, it's likely text-based
+            if text_chars > 200:  # Increased threshold
+                return "text-based"
+            else:
+                return "image-based"
+                
+    except Exception as e:
+        #logger.warning(f"Could not determine PDF type: {e}")
+        return (f"Could not determine PDF type")
+
+# Helper function for model-specific token estimation
+def estimate_tokens_for_model(file_path, model_name):
+    """Estimate tokens based on file and model type"""
+    try:
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            
+            if model_name == 'gpt-4o':
+                # GPT-4o uses more tokens for complex reasoning
+                input_tokens = file_size // 3
+                output_tokens = 3000
+                estimated_tokens = min(max(input_tokens + output_tokens, 2000), 6000)
+            elif model_name == 'gpt-4o-mini':
+                # GPT-4o-mini is more efficient
+                input_tokens = file_size // 4
+                output_tokens = 2000
+                estimated_tokens = min(max(input_tokens + output_tokens, 1500), 4000)
+            else:  # gpt-3.5-turbo
+                input_tokens = file_size // 4
+                output_tokens = 2000
+                estimated_tokens = min(max(input_tokens + output_tokens, 1500), 3000)
+                
+            return estimated_tokens
+    except:
+        pass
+    
+    # Default estimates by model
+    defaults = {
+        'gpt-4o': 3000,
+        'gpt-4o-mini': 2500,
+        'gpt-3.5-turbo': 2500
+    }
+    return defaults.get(model_name, 2000)
+
+# Updated process_extraction_job_async with model-aware concurrency
 async def process_extraction_job_async(job_id, files, resume_extractor):
-    """Process extraction job with progress tracking optimized for GPT-4.1"""
+    """Process extraction job with model-aware concurrency control"""
     try:
         results = []
         total_files = len(files)
@@ -296,27 +419,38 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
         # Update job status to processing
         job_storage.update_job(job_id, 'processing', progress=0)
         
-        # Reduced concurrency for GPT-4.1 TPM limits
-        semaphore = asyncio.Semaphore(20)  # Reduced from 25 to 12
+        # Model-aware semaphore limits
+        model_semaphores = {
+            'gpt-4o': asyncio.Semaphore(8),        # Conservative for 40k TPM
+            'gpt-4o-mini': asyncio.Semaphore(15),  # Higher for 200k TPM
+            'gpt-3.5-turbo': asyncio.Semaphore(15) # Medium
+        }
+        
+        # Overall semaphore to prevent overwhelming
+        overall_semaphore = asyncio.Semaphore(30)
         
         async def process_with_semaphore(file_info, index):
-            async with semaphore:
+            async with overall_semaphore:
                 file_path, filename = file_info
-                result = await process_single_resume(resume_extractor, file_path, filename)
+                model_name = determine_model_for_file(file_path, filename)
                 
-                # Update progress more frequently for better UX
-                if total_files > 20:
-                    # For large batches, update every 5% or at completion
-                    if (index + 1) % max(1, total_files // 20) == 0 or index == total_files - 1:
-                        progress = int((index + 1) * 100 / total_files)
-                        job_storage.update_job(job_id, 'processing', progress=progress)
-                else:
-                    # For small batches, update every 2 files
-                    if (index + 1) % 2 == 0 or index == total_files - 1:
-                        progress = int((index + 1) * 100 / total_files)
-                        job_storage.update_job(job_id, 'processing', progress=progress)
+                # Use model-specific semaphore
+                semaphore = model_semaphores.get(model_name, model_semaphores['gpt-4o-mini'])
                 
-                return result
+                async with semaphore:
+                    result = await process_single_resume(resume_extractor, file_path, filename)
+                    
+                    # Update progress
+                    if total_files > 20:
+                        if (index + 1) % max(1, total_files // 20) == 0 or index == total_files - 1:
+                            progress = int((index + 1) * 100 / total_files)
+                            job_storage.update_job(job_id, 'processing', progress=progress)
+                    else:
+                        if (index + 1) % 2 == 0 or index == total_files - 1:
+                            progress = int((index + 1) * 100 / total_files)
+                            job_storage.update_job(job_id, 'processing', progress=progress)
+                    
+                    return result
         
         # Create tasks for all files
         tasks = [
@@ -324,8 +458,8 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
             for i, file_info in enumerate(files)
         ]
         
-        # Process in smaller batches for better memory management and rate limiting
-        batch_size = 30  # Reduced from 50 to 25
+        # Process in model-aware batches
+        batch_size = 40  # Increased since we have better model-specific limits
         for i in range(0, len(tasks), batch_size):
             batch_tasks = tasks[i:i + batch_size]
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -337,9 +471,9 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
                 else:
                     results.append(result)
             
-            # Add a small delay between batches to help with rate limiting
+            # Add a small delay between batches
             if i + batch_size < len(tasks):
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
         
         if total_files > 1 or any(r.get('error') for r in results):
             print(f"Extraction job {job_id} completed with {len(results)} results")
@@ -378,24 +512,24 @@ async def process_single_candidate_fit(evaluator, resume, job_description, fit_o
         candidate_name = resume.get('personal_info', {}).get('name', 'Unknown')
         return {"candidate_name": candidate_name, "error": str(e), "success": False}
 
-# Updated process_candidate_fit_job_async with better concurrency control
+# Updated process_candidate_fit_job_async with model-aware concurrency
 async def process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options=None):
-    """Process candidate fit job with progress tracking optimized for GPT-4.1"""
+    """Process candidate fit job with model-aware concurrency control"""
     results = []
     total_resumes = len(resumes)
     
     # Update job status to processing
     job_storage.update_job(job_id, 'processing', progress=0)
     
-    # Reduced concurrent operations for GPT-4.1 TPM limits
-    semaphore = asyncio.Semaphore(15)  # Reduced from 20 to 10
+    # Use lower concurrency for gpt-4o due to 40k TPM limit
+    semaphore = asyncio.Semaphore(8)  # Conservative for gpt-4o
     
     async def process_with_semaphore(resume, index):
         async with semaphore:
             result = await process_single_candidate_fit(evaluator, resume, job_description, fit_options)
             
-            # Update progress more frequently
-            if (index + 1) % 3 == 0 or index == total_resumes - 1:  # Every 3 resumes
+            # Update progress
+            if (index + 1) % 2 == 0 or index == total_resumes - 1:
                 progress = int((index + 1) * 100 / total_resumes)
                 job_storage.update_job(job_id, 'processing', progress=progress)
             
@@ -407,8 +541,8 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
         for i, resume in enumerate(resumes)
     ]
     
-    # Process in smaller batches for candidate fit
-    batch_size = 15  # Reduced from 25 to 15
+    # Process in smaller batches for candidate fit (due to gpt-4o TPM limits)
+    batch_size = 10  # Smaller batches for gpt-4o
     for i in range(0, len(tasks), batch_size):
         batch_tasks = tasks[i:i + batch_size]
         batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -416,12 +550,12 @@ async def process_candidate_fit_job_async(job_id, resumes, job_description, eval
         for result in batch_results:
             if isinstance(result, Exception):
                 results.append({"error": str(result), "success": False})
-            elif result:  # Only add non-None results
+            elif result:
                 results.append(result)
         
-        # Add a small delay between batches
+        # Add delay between batches for gpt-4o
         if i + batch_size < len(tasks):
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.5)
     
     # Mark job as completed
     job_storage.update_job(job_id, 'completed', results, progress=100)
@@ -678,10 +812,10 @@ async def download_fit_excel(data: dict):
         headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
     )
 
-# Updated health check to show TPM information
+# Updated health check with model-specific information
 @app.get("/system/health")
 async def health_check():
-    """System health and statistics"""
+    """System health and statistics with model-specific information"""
     try:
         # Test resume extractor
         extractor_status = "unknown"
@@ -689,6 +823,18 @@ async def health_check():
             extractor_status = "healthy" if resume_extractor else "not_initialized"
         except Exception as e:
             extractor_status = f"error: {str(e)}"
+        
+        # Get model-specific rate limiter stats
+        model_stats = {}
+        for model_name, limits in rate_limiter.model_limits.items():
+            model_stats[model_name] = {
+                "current_rpm": len(rate_limiter.model_requests[model_name]),
+                "max_rpm": limits['max_requests'],
+                "current_tpm": rate_limiter.model_current_minute_tokens[model_name],
+                "max_tpm": limits['max_tokens_per_minute'],
+                "utilization_rpm": len(rate_limiter.model_requests[model_name]) / limits['max_requests'] * 100,
+                "utilization_tpm": rate_limiter.model_current_minute_tokens[model_name] / limits['max_tokens_per_minute'] * 100
+            }
         
         return {
             "status": "healthy",
@@ -699,21 +845,15 @@ async def health_check():
                 "queue_size": processing_queue.queue.qsize()
             },
             "rate_limiter": {
-                "requests_in_window": len(rate_limiter.requests),
-                "max_requests": rate_limiter.max_requests,
-                "time_window": rate_limiter.time_window,
-                "current_rpm": len(rate_limiter.requests),
-                "current_tpm": rate_limiter.current_minute_tokens,
-                "max_tpm": rate_limiter.max_tokens_per_minute
+                "models": model_stats
             },
             "thread_pool": {
                 "max_workers": executor._max_workers
             },
-            "model_info": {
-                "model": "gpt-4.1",
-                "tpm_limit": 30000,
-                "rpm_limit": 500,
-                "tpd_limit": 900000
+            "model_configuration": {
+                "extraction_default": "gpt-4o-mini",
+                "candidate_fit_default": "gpt-4o",
+                "scanned_pdf_model": "gpt-4o-mini"
             },
             "timestamp": datetime.utcnow().isoformat()
         }
