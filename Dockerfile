@@ -28,7 +28,7 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Expose FastAPI port
-EXPOSE 8000
+EXPOSE 8080
 
 # Start supervisord
 CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
