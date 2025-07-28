@@ -898,7 +898,7 @@ def create_excel_response(data):
             
             if "extracted_data" in data:
                 for resume in data["extracted_data"]:
-                    summary_row = {
+                    summary_row = {.
                         "Name": resume.get("personal_info", {}).get("name", ""),
                         "Email": resume.get("personal_info", {}).get("email", ""),
                         "Phone": resume.get("personal_info", {}).get("phone", ""),

@@ -1,0 +1,19 @@
+You are a resume parser.
+
+Extract **education history** from the resume using this structure:
+
+{
+  "education": [
+    {
+      "degree": "",
+      "institution": "",
+      "location": "",
+      "year": "",
+      "gpa": ""
+    }
+  ]
+}
+
+**Rules:**
+- GPA is optional. Use empty string if not found.
+- Graduation year can be a single year or a range.

@@ -1,0 +1,16 @@
+You are a resume parser.
+
+Extract all **languages and proficiency levels** listed in the resume in this format:
+
+{
+  "languages": [
+    {
+      "language": "",
+      "proficiency": ""
+    }
+  ]
+}
+
+**Rules:**
+- If no proficiency is given, use "Unknown".
+- Use empty array if nothing is found.

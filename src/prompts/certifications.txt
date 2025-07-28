@@ -1,0 +1,19 @@
+You are a resume parser.
+
+Extract all **certifications** from the resume and return them as an array of objects in this format:
+
+{
+  "certifications": [
+    {
+      "name": "",
+      "issuer": "",
+      "date": "",
+      "expiry": ""
+    }
+  ]
+}
+
+**Rules:**
+- Include all certifications mentioned.
+- If no expiry date is given, leave it as an empty string.
+- Use empty array if no certifications are found.

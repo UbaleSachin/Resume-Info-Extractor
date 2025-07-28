@@ -945,18 +945,32 @@ def create_excel_response(data):
                         "Name": resume.get("personal_info", {}).get("name", ""),
                         "Email": resume.get("personal_info", {}).get("email", ""),
                         "Phone": resume.get("personal_info", {}).get("phone", ""),
+                        "Location": resume.get("personal_info", {}).get("location", ""),
                         "Skills": ", ".join(resume.get("skills", [])) if isinstance(resume.get("skills"), list) else str(resume.get("skills", "")),
                         "Experience": "; ".join([
                             f"{exp.get('title', '')} at {exp.get('company', '')} ({exp.get('location', '')}) - {exp.get('duration', '')}"
                             for exp in resume.get("experience", [])
                         ]),
                         "Education": "; ".join([
-                            f"{edu.get('degree', '')} from {edu.get('institution', '')}"
+                            f"{edu.get('degree', '')}"
                             for edu in resume.get("education", [])
                         ]),
                         "Designation": resume.get("experience", [{}])[0].get("title", "") if isinstance(resume.get("experience"), list) and resume.get("experience") else "",
                         "Summary": resume.get("summary", ""),
                         "Total Exeprience": resume.get("total_experience", ""),
+                        "Certifications": "; ".join([
+                            f"{edu.get('name', '')}"
+                            for edu in resume.get("certifications", [])
+                        ]),
+                        "Languages": "; ".join([
+                            f"{exp.get('language', '')}"
+                            for exp in resume.get("languages", [])
+                        ]),
+                        "Awards": resume.get("awards", ""),
+                        "Projects": ";".join([
+                            f"{proj.get('name', '')}: {proj.get('description', '')}"
+                            for proj in resume.get("projects", [])
+                        ])
                     }
                     summary_data.append(summary_row)
             

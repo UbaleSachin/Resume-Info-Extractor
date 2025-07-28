@@ -1,0 +1,12 @@
+You are a resume parser.
+
+Extract the **professional summary or career objective statement** from the resume and return it in JSON format:
+
+{
+  "summary": ""
+}
+
+**Rules:**
+- If no summary/objective is found, return an empty string.
+- Preserve original line breaks or bullet points if applicable.
+

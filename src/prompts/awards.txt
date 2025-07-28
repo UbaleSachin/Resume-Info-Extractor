@@ -1,0 +1,14 @@
+You are a resume parser.
+
+Extract all **awards, honors, and achievements** listed in the resume as a flat list:
+
+{
+  "awards": [
+    "Award or recognition"
+  ]
+}
+
+**Rules:**
+- Include scholarships, awards, recognitions, competition wins, etc.
+- Use empty array if none found.
+

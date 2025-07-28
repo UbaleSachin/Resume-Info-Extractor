@@ -474,6 +474,10 @@ class ResumeExtractor {
                             <th>Experience</th>
                             <th>Summary</th>
                             <th>Total Experience</th>
+                            <th>Certifications</th>
+                            <th>Languages</th>
+                            <th>Awards</th>
+                            <th>Projects</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -483,7 +487,7 @@ class ResumeExtractor {
                 const email = resume.personal_info?.email || '';
                 const phone = resume.personal_info?.phone || '';
                 const location = resume.personal_info?.location || '';
-                const designation = resume.personal_info?.designation || '';
+                const designation = resume.experience?.title || '';
                 const skills = Array.isArray(resume.skills) ? resume.skills.join(', ') : (resume.skills || '');
                 const education = Array.isArray(resume.education)
                     ? resume.education.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
@@ -492,7 +496,19 @@ class ResumeExtractor {
                     ? resume.experience.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
                     : (resume.experience || '');
                 const summary = resume.summary || "";
-                const total_experience = resume.experience?.total_experience || '';
+                const total_experience = resume.total_experience || '';
+                const certifications = Array.isArray(resume.certifications)
+                    ? resume.certifications.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
+                    : (resume.certifications || '');
+                const languages = Array.isArray(resume.languages)
+                    ? resume.languages.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
+                    : (resume.languages || '');
+                const awards = Array.isArray(resume.awards)
+                    ? resume.awards.join(' | ')
+                    : (resume.awards || '');
+                const projects = Array.isArray(resume.projects)
+                    ? resume.projects.map(e => (typeof e === 'object' ? Object.values(e).filter(v => v).join(', ') : e)).join(' | ')
+                    : (resume.projects || '');
 
                 tableHtml += `
                     <tr>
@@ -507,6 +523,10 @@ class ResumeExtractor {
                         <td>${experience}</td>
                         <td>${summary}</td>
                         <td>${total_experience}</td>
+                        <td>${certifications}</td>
+                        <td>${languages}</td>
+                        <td>${awards}</td>
+                        <td>${projects}</td>
                     </tr>
                 `;
             });
