@@ -47,6 +47,8 @@ class ResumeExtractor:
         # Google Cloud Vision API configuration
         self.google_credentials_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
         self.google_project_id = os.getenv('GOOGLE_CLOUD_PROJECT_ID')
+        self.google_credentials_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+
 
         # API configurations
         self.openai_api_key = os.getenv('OPENAI_API_KEY')
@@ -54,17 +56,38 @@ class ResumeExtractor:
             raise ValueError("OPENAI_API_KEY is not set")
 
         self.vision_client = None
-        if self.google_credentials_path and os.path.exists(self.google_credentials_path):
-            try:
+        self.temp_file_path = None  # Track temp file for cleanup
+        
+        try:
+            if self.google_credentials_path and os.path.exists(self.google_credentials_path):
+                # Use the credentials file if it exists
                 credentials = service_account.Credentials.from_service_account_file(
                     self.google_credentials_path
                 )
-                self.vision_client = vision.ImageAnnotatorClient(credentials=credentials)
-                logger.info("Google Cloud Vision API initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Google Cloud Vision API: {e}")
-        else:
-            logger.warning("Google Cloud Vision API credentials not found or invalid")
+                logger.info("Using Google Cloud credentials from file")
+                
+            elif self.google_credentials_json:
+                # Parse and validate JSON first
+                try:
+                    credentials_dict = json.loads(self.google_credentials_json)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Invalid JSON in GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+                
+                # Create credentials directly from dict (more efficient)
+                credentials = service_account.Credentials.from_service_account_info(
+                    credentials_dict
+                )
+                logger.info("Using Google Cloud credentials from environment variable")
+                
+            else:
+                raise ValueError("No valid Google Cloud credentials provided. Set either GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_APPLICATION_CREDENTIALS_JSON")
+
+            self.vision_client = vision.ImageAnnotatorClient(credentials=credentials)
+            logger.info("Google Cloud Vision API initialized successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Cloud Vision API: {e}")
+            raise
         
         # Available API providers and models
         self.api_providers = {
@@ -187,6 +210,14 @@ class ResumeExtractor:
         print(f"Initialized with provider: {self.current_provider}")
         print(f"Current vision model: {self.get_current_vision_model()}")
         print(f"Current text model: {self.get_current_text_model()}")
+
+    def __del__(self):
+        # Clean up temp file if it was created
+        if hasattr(self, 'temp_file_path') and self.temp_file_path and os.path.exists(self.temp_file_path):
+            try:
+                os.unlink(self.temp_file_path)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp file: {e}")
 
     def load_prompts(self):
         prompts = {}
