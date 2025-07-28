@@ -34,7 +34,7 @@ aiofiles==23.2.1
 werkzeug
 gunicorn
 
-redis
+#redis
 
 fastapi
 sqlalchemy

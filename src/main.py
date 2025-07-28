@@ -1,3 +1,4 @@
+# Updated imports (remove redis)
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, status, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -25,7 +26,6 @@ import asyncio
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-import redis
 from dotenv import load_dotenv
 
 from src.llm.resume_extractor import ResumeExtractor
@@ -142,21 +142,52 @@ class RateLimiter:
                 await asyncio.sleep(wait_time)
                 await self.acquire(model_name, estimated_tokens)  # Retry after waiting
 
-# Redis-based job storage
+# Asyncio-based in-memory job storage
 class JobStorage:
     def __init__(self):
-        redis_pool = redis.ConnectionPool(
-        host='localhost', 
-        port=6379, 
-        db=0, 
-        max_connections=20,
-        decode_responses=True
-)
-        self.redis_client = redis.Redis(connection_pool=redis_pool)
-        self._update_cache = {}
-        self._last_update = {}
+        self._jobs = {}  # In-memory storage
+        self._lock = asyncio.Lock()  # Async lock for thread safety
+        self._cleanup_task = None
+        self._initialized = False
     
-    def create_job(self, job_id, job_type):
+    async def initialize(self):
+        """Initialize the job storage and start cleanup task"""
+        if not self._initialized:
+            self._cleanup_task = asyncio.create_task(self._cleanup_expired_jobs())
+            self._initialized = True
+    
+    async def _cleanup_expired_jobs(self):
+        """Background task to clean up expired jobs"""
+        while True:
+            try:
+                await asyncio.sleep(300)  # Run every 5 minutes
+                current_time = datetime.utcnow()
+                expired_jobs = []
+                
+                async with self._lock:
+                    for job_id, job_data in self._jobs.items():
+                        created_at = datetime.fromisoformat(job_data['created_at'])
+                        # Remove jobs older than 1 hour
+                        if current_time - created_at > timedelta(hours=1):
+                            expired_jobs.append(job_id)
+                    
+                    # Remove expired jobs
+                    for job_id in expired_jobs:
+                        del self._jobs[job_id]
+                
+                if expired_jobs:
+                    print(f"Cleaned up {len(expired_jobs)} expired jobs")
+                    
+            except Exception as e:
+                print(f"Error in cleanup task: {e}")
+                await asyncio.sleep(60)  # Wait a minute before retrying
+    
+    async def create_job(self, job_id: str, job_type: str):
+        """Create a new job"""
+        # Ensure initialization
+        if not self._initialized:
+            await self.initialize()
+            
         job_data = {
             'status': 'pending',
             'results': None,
@@ -164,32 +195,68 @@ class JobStorage:
             'type': job_type,
             'progress': 0
         }
-        self.redis_client.setex(f"job:{job_id}", 3600, json.dumps(job_data))
-    
-    def update_job(self, job_id, status, results=None, progress=None):
-        # Batch progress updates to reduce Redis calls
-        if status == 'processing' and progress is not None:
-            now = time.time()
-            if job_id in self._last_update and now - self._last_update[job_id] < 2:  # Minimum 2 seconds between updates
-                return
-            self._last_update[job_id] = now
         
-        job_data = json.loads(self.redis_client.get(f"job:{job_id}") or '{}')
-        job_data['status'] = status
-        if results is not None:
-            job_data['results'] = results
-        if progress is not None:
-            job_data['progress'] = progress
-        job_data['updated_at'] = datetime.utcnow().isoformat()
-        self.redis_client.setex(f"job:{job_id}", 3600, json.dumps(job_data))
+        async with self._lock:
+            self._jobs[job_id] = job_data
     
-    def get_job(self, job_id):
-        job_data = self.redis_client.get(f"job:{job_id}")
-        return json.loads(job_data) if job_data else None
+    async def update_job(self, job_id: str, status: str, results=None, progress=None):
+        """Update job status and results"""
+        async with self._lock:
+            if job_id not in self._jobs:
+                return False
+            
+            job_data = self._jobs[job_id]
+            job_data['status'] = status
+            
+            if results is not None:
+                job_data['results'] = results
+            
+            if progress is not None:
+                job_data['progress'] = progress
+            
+            job_data['updated_at'] = datetime.utcnow().isoformat()
+            return True
+        
+    async def get_job(self, job_id: str):
+        """Get job data"""
+        async with self._lock:
+            return self._jobs.get(job_id)
+    
+    async def delete_job(self, job_id: str):
+        """Delete a job"""
+        async with self._lock:
+            if job_id in self._jobs:
+                del self._jobs[job_id]
+                return True
+            return False
+    
+    async def get_stats(self):
+        """Get storage statistics"""
+        async with self._lock:
+            total_jobs = len(self._jobs)
+            status_counts = {}
+            
+            for job_data in self._jobs.values():
+                status = job_data['status']
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            return {
+                'total_jobs': total_jobs,
+                'status_breakdown': status_counts
+            }
+    
+    async def shutdown(self):
+        """Gracefully shutdown the job storage"""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
 
-# Updated ProcessingQueue with lower concurrency for GPT-4.1
+# Updated ProcessingQueue with async job storage
 class ProcessingQueue:
-    def __init__(self):
+    def __init__(self, job_storage):
         # Model-specific concurrency limits
         self.model_concurrency = {
             'gpt-4o': 8,        # Lower due to 40k TPM limit
@@ -199,9 +266,10 @@ class ProcessingQueue:
         
         self.queue = asyncio.Queue()
         self.active_jobs = 0
-        self.max_concurrent = 25  # Overall max
+        self.max_concurrent = 20  # Reduced for memory optimization
         self.processing_task = None
         self.running = False
+        self.job_storage = job_storage  # Reference to job storage
         
         # Track active jobs per model
         self.model_active_jobs = {
@@ -246,17 +314,17 @@ class ProcessingQueue:
     
     async def _process_extraction_job(self, job_id, files, resume_extractor):
         try:
-            await process_extraction_job_async(job_id, files, resume_extractor)
+            await process_extraction_job_async(job_id, files, resume_extractor, self.job_storage)
         except Exception as e:
-            job_storage.update_job(job_id, 'failed', {'error': str(e)})
+            await self.job_storage.update_job(job_id, 'failed', {'error': str(e)})
         finally:
             self.active_jobs -= 1
 
     async def _process_candidate_fit_job(self, job_id, resumes, job_description, evaluator, fit_options):
         try:
-            await process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options)
+            await process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options, self.job_storage)
         except Exception as e:
-            job_storage.update_job(job_id, 'failed', {'error': str(e)})
+            await self.job_storage.update_job(job_id, 'failed', {'error': str(e)})
         finally:
             self.active_jobs -= 1
 
@@ -268,7 +336,7 @@ candidate_fit_evaluator = CandidateFitEvaluator()
 rate_limiter = RateLimiter()  # Now handles multiple models
 job_storage = JobStorage()
 executor = ThreadPoolExecutor(max_workers=30)  # Increased for better model distribution
-processing_queue = ProcessingQueue()  # Now model-aware
+processing_queue = ProcessingQueue(job_storage)  # Now model-aware
 
 # Pydantic models
 class DownloadRequest(BaseModel):
@@ -406,9 +474,9 @@ def estimate_tokens_for_model(file_path, model_name):
     }
     return defaults.get(model_name, 2000)
 
-# Updated process_extraction_job_async with model-aware concurrency
-async def process_extraction_job_async(job_id, files, resume_extractor):
-    """Process extraction job with model-aware concurrency control"""
+# Updated process_extraction_job_async with async job storage
+async def process_extraction_job_async(job_id, files, resume_extractor, job_storage):
+    """Process extraction job with async job storage"""
     try:
         results = []
         total_files = len(files)
@@ -417,7 +485,7 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
             print(f"Starting extraction job {job_id} with {total_files} files")
         
         # Update job status to processing
-        job_storage.update_job(job_id, 'processing', progress=0)
+        await job_storage.update_job(job_id, 'processing', progress=0)
         
         # Model-aware semaphore limits
         model_semaphores = {
@@ -426,8 +494,8 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
             'gpt-3.5-turbo': asyncio.Semaphore(15) # Medium
         }
         
-        # Overall semaphore to prevent overwhelming
-        overall_semaphore = asyncio.Semaphore(30)
+        # Overall semaphore to prevent overwhelming (reduced for memory)
+        overall_semaphore = asyncio.Semaphore(20)
         
         async def process_with_semaphore(file_info, index):
             async with overall_semaphore:
@@ -440,15 +508,15 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
                 async with semaphore:
                     result = await process_single_resume(resume_extractor, file_path, filename)
                     
-                    # Update progress
+                    # Update progress more frequently for better UX
                     if total_files > 20:
                         if (index + 1) % max(1, total_files // 20) == 0 or index == total_files - 1:
                             progress = int((index + 1) * 100 / total_files)
-                            job_storage.update_job(job_id, 'processing', progress=progress)
+                            await job_storage.update_job(job_id, 'processing', progress=progress)
                     else:
                         if (index + 1) % 2 == 0 or index == total_files - 1:
                             progress = int((index + 1) * 100 / total_files)
-                            job_storage.update_job(job_id, 'processing', progress=progress)
+                            await job_storage.update_job(job_id, 'processing', progress=progress)
                     
                     return result
         
@@ -458,8 +526,8 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
             for i, file_info in enumerate(files)
         ]
         
-        # Process in model-aware batches
-        batch_size = 40  # Increased since we have better model-specific limits
+        # Process in batches (reduced batch size for memory optimization)
+        batch_size = 30
         for i in range(0, len(tasks), batch_size):
             batch_tasks = tasks[i:i + batch_size]
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
@@ -479,11 +547,11 @@ async def process_extraction_job_async(job_id, files, resume_extractor):
             print(f"Extraction job {job_id} completed with {len(results)} results")
         
         # Mark job as completed
-        job_storage.update_job(job_id, 'completed', results, progress=100)
+        await job_storage.update_job(job_id, 'completed', results, progress=100)
         
     except Exception as e:
         print(f"Error in extraction job {job_id}: {str(e)}")
-        job_storage.update_job(job_id, 'failed', {'error': str(e)})
+        await job_storage.update_job(job_id, 'failed', {'error': str(e)})
 
 # Updated process_single_candidate_fit with token estimation
 async def process_single_candidate_fit(evaluator, resume, job_description, fit_options=None):
@@ -512,60 +580,77 @@ async def process_single_candidate_fit(evaluator, resume, job_description, fit_o
         candidate_name = resume.get('personal_info', {}).get('name', 'Unknown')
         return {"candidate_name": candidate_name, "error": str(e), "success": False}
 
-# Updated process_candidate_fit_job_async with model-aware concurrency
-async def process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options=None):
-    """Process candidate fit job with model-aware concurrency control"""
-    results = []
-    total_resumes = len(resumes)
-    
-    # Update job status to processing
-    job_storage.update_job(job_id, 'processing', progress=0)
-    
-    # Use lower concurrency for gpt-4o due to 40k TPM limit
-    semaphore = asyncio.Semaphore(8)  # Conservative for gpt-4o
-    
-    async def process_with_semaphore(resume, index):
-        async with semaphore:
-            result = await process_single_candidate_fit(evaluator, resume, job_description, fit_options)
-            
-            # Update progress
-            if (index + 1) % 2 == 0 or index == total_resumes - 1:
-                progress = int((index + 1) * 100 / total_resumes)
-                job_storage.update_job(job_id, 'processing', progress=progress)
-            
-            return result
-    
-    # Create tasks for all resumes
-    tasks = [
-        process_with_semaphore(resume, i) 
-        for i, resume in enumerate(resumes)
-    ]
-    
-    # Process in smaller batches for candidate fit (due to gpt-4o TPM limits)
-    batch_size = 10  # Smaller batches for gpt-4o
-    for i in range(0, len(tasks), batch_size):
-        batch_tasks = tasks[i:i + batch_size]
-        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+# Updated process_candidate_fit_job_async with async job storage
+async def process_candidate_fit_job_async(job_id, resumes, job_description, evaluator, fit_options, job_storage):
+    """Process candidate fit job with async job storage"""
+    try:
+        results = []
+        total_resumes = len(resumes)
         
-        for result in batch_results:
-            if isinstance(result, Exception):
-                results.append({"error": str(result), "success": False})
-            elif result:
-                results.append(result)
+        # Update job status to processing
+        await job_storage.update_job(job_id, 'processing', progress=0)
         
-        # Add delay between batches for gpt-4o
-        if i + batch_size < len(tasks):
-            await asyncio.sleep(0.5)
-    
-    # Mark job as completed
-    job_storage.update_job(job_id, 'completed', results, progress=100)
+        # Use lower concurrency for gpt-4o due to 40k TPM limit
+        semaphore = asyncio.Semaphore(8)  # Conservative for gpt-4o
+        
+        async def process_with_semaphore(resume, index):
+            async with semaphore:
+                # Make sure resume is a dictionary, not a list
+                if isinstance(resume, list):
+                    resume = resume[0] if resume else {}
+                
+                # Debugging output
+                print(f"Processing resume {index+1}/{total_resumes} of type {type(resume)}")
+                
+                result = await process_single_candidate_fit(evaluator, resume, job_description, fit_options)
+                
+                # Update progress
+                if (index + 1) % 2 == 0 or index == total_resumes - 1:
+                    progress = int((index + 1) * 100 / total_resumes)
+                    await job_storage.update_job(job_id, 'processing', progress=progress)
+                
+                return result
+        
+        # Create tasks for all resumes
+        tasks = [
+            process_with_semaphore(resume, i) 
+            for i, resume in enumerate(resumes)
+        ]
+        
+        # Process in smaller batches for candidate fit (due to gpt-4o TPM limits)
+        batch_size = 8  # Smaller batches for gpt-4o and memory optimization
+        for i in range(0, len(tasks), batch_size):
+            batch_tasks = tasks[i:i + batch_size]
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    print(f"Batch exception: {result}")
+                    results.append({"error": str(result), "success": False})
+                elif result:
+                    print(f"Successfully processed result: {result.get('candidate_name', 'Unknown')}")
+                    results.append(result)
+                else:
+                    print(f"Empty result from process_single_candidate_fit")
+            
+            # Add delay between batches for gpt-4o
+            if i + batch_size < len(tasks):
+                await asyncio.sleep(0.5)
+        
+        # Mark job as completed
+        print(f"Completed job {job_id} with {len(results)} results")
+        await job_storage.update_job(job_id, 'completed', results, progress=100)
+        
+    except Exception as e:
+        print(f"Error in candidate fit job {job_id}: {str(e)}")
+        await job_storage.update_job(job_id, 'failed', {'error': str(e)})
 
 
 @app.get("/")
 async def root():
     return {"message": "Resume Extractor API v2.0 is running with async processing"}
 
-# Updated extract_resume_data endpoint with better time estimation
+# Updated API endpoints with async job storage
 @app.post("/extract-resume")
 async def extract_resume_data(files: List[UploadFile] = File(...)):
     """
@@ -608,14 +693,14 @@ async def extract_resume_data(files: List[UploadFile] = File(...)):
         if not file_infos:
             raise HTTPException(status_code=400, detail="No valid files to process")
         
-        # Create job in storage
-        job_storage.create_job(job_id, 'extraction')
+        # Create job in storage (now async)
+        await job_storage.create_job(job_id, 'extraction')
         
         # Add to processing queue
         await processing_queue.add_job('extraction', job_id, file_infos, resume_extractor)
 
-        # Updated time estimation for GPT-4.1 (slower due to TPM limits)
-        estimated_time_minutes = max(2, len(file_infos) // 15)  # More conservative estimate
+        # Updated time estimation
+        estimated_time_minutes = max(2, len(file_infos) // 15)
         
         return {
             'success': True, 
@@ -637,7 +722,7 @@ async def extract_resume_data(files: List[UploadFile] = File(...)):
 async def get_extraction_status(job_id: str):
     """Get job status with progress tracking"""
     try:
-        job = job_storage.get_job(job_id)
+        job = await job_storage.get_job(job_id)  # Now async
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
@@ -693,7 +778,6 @@ async def extract_job_description(request: JobDescriptionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing job description: {str(e)}")
 
-# Updated candidate_fit endpoint with better limits and estimation
 @app.post("/candidate-fit")
 async def candidate_fit(request: CandidateFitRequest):
     """Compare multiple resumes and job description with async processing"""
@@ -703,8 +787,8 @@ async def candidate_fit(request: CandidateFitRequest):
     if not request.job_description_data:
         raise HTTPException(status_code=400, detail="Job description is required")
     
-    # Updated limit for GPT-4.1 (more conservative)
-    if len(request.resume_data) > 500:  # Reduced from 500 to 300
+    # Updated limit for memory optimization
+    if len(request.resume_data) > 300:  # Reduced for memory optimization
         raise HTTPException(status_code=400, detail="Too many resumes. Maximum 300 resumes per request.")
     
     fit_options = request.fit_options or {}
@@ -712,8 +796,8 @@ async def candidate_fit(request: CandidateFitRequest):
     job_id = str(uuid.uuid4())
     
     try:
-        # Create job in storage
-        job_storage.create_job(job_id, 'candidate_fit')
+        # Create job in storage (now async)
+        await job_storage.create_job(job_id, 'candidate_fit')
         
         # Add to processing queue
         await processing_queue.add_job(
@@ -725,8 +809,8 @@ async def candidate_fit(request: CandidateFitRequest):
             fit_options
         )
 
-        # Updated time estimation for GPT-4.1 (slower due to TPM limits)
-        estimated_time_minutes = max(2, len(request.resume_data) // 10)  # More conservative
+        # Updated time estimation
+        estimated_time_minutes = max(2, len(request.resume_data) // 10)
         
         return {
             "success": True, 
@@ -743,7 +827,7 @@ async def candidate_fit(request: CandidateFitRequest):
 @app.get("/candidate-fit/{job_id}")
 async def get_candidate_fit_job(job_id: str):
     """Get candidate fit job status with progress tracking"""
-    job = job_storage.get_job(job_id)
+    job = await job_storage.get_job(job_id)  # Now async
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
@@ -812,10 +896,10 @@ async def download_fit_excel(data: dict):
         headers={"Content-Disposition": "attachment; filename=candidate_fit_results.xlsx"}
     )
 
-# Updated health check with model-specific information
+# Updated health check with async job storage stats
 @app.get("/system/health")
 async def health_check():
-    """System health and statistics with model-specific information"""
+    """System health and statistics"""
     try:
         # Test resume extractor
         extractor_status = "unknown"
@@ -836,6 +920,9 @@ async def health_check():
                 "utilization_tpm": rate_limiter.model_current_minute_tokens[model_name] / limits['max_tokens_per_minute'] * 100
             }
         
+        # Get job storage stats (now async)
+        storage_stats = await job_storage.get_stats()
+        
         return {
             "status": "healthy",
             "resume_extractor": extractor_status,
@@ -846,6 +933,10 @@ async def health_check():
             },
             "rate_limiter": {
                 "models": model_stats
+            },
+            "job_storage": {
+                "type": "in_memory_async",
+                "stats": storage_stats
             },
             "thread_pool": {
                 "max_workers": executor._max_workers
@@ -1091,4 +1182,4 @@ def create_pdf_response(data):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
