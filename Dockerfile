@@ -27,4 +27,4 @@ COPY . .
 EXPOSE 8000
 
 # Start FastAPI directly (no longer need supervisor for Redis)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
