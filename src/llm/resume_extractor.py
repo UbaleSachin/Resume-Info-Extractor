@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import logging
-import PyPDF2
+#import PyPDF2
 import docx
 import pandas as pd
 import re
@@ -20,10 +20,10 @@ import base64
 
 import fitz  # PyMuPDF
 from PIL import Image
-import pytesseract
+#import pytesseract
 import io
 import numpy as np
-import cv2
+#import cv2
 
 from unicodedata import category
 import unicodedata

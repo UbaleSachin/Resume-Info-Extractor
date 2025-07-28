@@ -1,15 +1,15 @@
 # Updated imports (remove redis)
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, status, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, Integer, String, select
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+#from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+#from sqlalchemy.orm import sessionmaker, declarative_base
+#from sqlalchemy import Column, Integer, String, select
+#from jose import JWTError, jwt
+#from passlib.context import CryptContext
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+#from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import json
 import csv
